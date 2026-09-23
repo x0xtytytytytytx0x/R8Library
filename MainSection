@@ -46,6 +46,24 @@ local CUSTOMIZE_ICON="rbxassetid://12334709462" local OWNER_USER_ID=1115062717
 local ATTR_NAME="R8//TW0"
 local MATRIX_PAD=14
 local UI_VERSION="6.7"
+
+local SAVE_ROOT="R8TW0"
+local SAVE_SETTINGS=SAVE_ROOT.."/settings.json"
+local SAVE_THEMES=SAVE_ROOT.."/themes.json"
+local SAVE_PLACES=SAVE_ROOT.."/places"
+local function fsOk()return typeof(writefile)=="function" and typeof(readfile)=="function" end
+local function ensureDir(p)if not fsOk()then return end pcall(function()if typeof(isfolder)=="function" and not isfolder(p)then makefolder(p)end end)end
+local function jsonEnc(t)local ok,r=pcall(function()return game:GetService("HttpService"):JSONEncode(t)end)return ok and r or nil end
+local function jsonDec(s)if type(s)~="string" or s=="" then return nil end local ok,r=pcall(function()return game:GetService("HttpService"):JSONDecode(s)end)return ok and r or nil end
+local function readJson(path)if not fsOk()then return nil end local ok,data=pcall(function()if typeof(isfile)=="function" and not isfile(path)then return nil end return readfile(path)end)if not ok or not data then return nil end return jsonDec(data)end
+local function writeJson(path,tbl)if not fsOk()then return false end ensureDir(SAVE_ROOT)ensureDir(SAVE_PLACES)local s=jsonEnc(tbl)if not s then return false end local ok=pcall(function()writefile(path,s)end)return ok end
+local function colorToT(c)if typeof(c)~="Color3" then return nil end return{r=c.R,g=c.G,b=c.B}end
+local function tToColor(t)if type(t)~="table" then return nil end return Color3.new(tonumber(t.r)or 1,tonumber(t.g)or 1,tonumber(t.b)or 1)end
+local function keyName(k)if typeof(k)=="EnumItem" then return k.Name end if type(k)=="string" then return k end return nil end
+local function keyFromName(n)if type(n)~="string" or n=="" or n=="Unknown" then return nil end local ok,k=pcall(function()return Enum.KeyCode[n]end)if ok and k then return k end return nil end
+local function loadCustomThemes()local data=readJson(SAVE_THEMES)if type(data)~="table" then return end for name,snap in pairs(data)do if type(name)=="string" and type(snap)=="table" then local t={}for k,v in pairs(snap)do if type(v)=="table" and v.r~=nil then t[k]=tToColor(v)else t[k]=v end end Themes[name]=t end end end
+local function saveCustomThemes()local out={}for k,v in pairs(Themes)do if type(k)=="string" and k:sub(1,7)=="Custom " and type(v)=="table" then local snap={}for ck,cv in pairs(v)do if typeof(cv)=="Color3" then snap[ck]=colorToT(cv)else snap[ck]=cv end end out[k]=snap end end writeJson(SAVE_THEMES,out)end
+loadCustomThemes()
 local function themeDefaultIcon(themeName)if themeName=="RateOne" then
 return RATEONE_ICON
 end
@@ -486,6 +504,7 @@ end
 local function addStar(tabSelf,row,key,displayName,actionFn)local window=tabSelf.Window local theme=window.Theme local starBtn=new("TextButton",{Name="Star",AnchorPoint=Vector2.new(0,0.5),Position=UDim2.new(0,8,0,22),
 Size=UDim2.new(0,18,0,18),BackgroundTransparency=1,Font=Enum.Font.GothamBold,TextSize=15,TextColor3=theme.SubText,Text="☆",AutoButtonColor=false,},{})starBtn.Parent=row starBtn.MouseButton1Click:Connect(function()
 window:ToggleStar(tabSelf,row,key,displayName,starBtn,actionFn)end)
+if window._pendingStars and window._pendingStars[key]then window._pendingStars[key]=nil task.defer(function()if starBtn and starBtn.Parent then window:ToggleStar(tabSelf,row,key,displayName,starBtn,actionFn)end end)end
 return starBtn
 end
 local Window={}Window.__index=Window
@@ -766,7 +785,7 @@ end
 playSound(self,"OpenWindow")main.Size=UDim2.new(0,WIDTH,0,0)main.BackgroundTransparency=0.4 local flash=new("Frame",{AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.new(0.5,0,0.5,0),Size=UDim2.new(0,WIDTH,0,HEIGHT),
 BackgroundColor3=Color3.new(1,1,1),BackgroundTransparency=0.35,BorderSizePixel=0,ZIndex=50,},{corner(14)})flash.Parent=screenGui tween(flash,{BackgroundTransparency=1},0.45)task.delay(0.5,function()flash:Destroy()end)
 tween(main,{Size=UDim2.new(0,WIDTH,0,HEIGHT),BackgroundTransparency=0},0.38,Enum.EasingStyle.Back)tween(loadingOverlay,{BackgroundTransparency=1},0.3)task.wait(0.4)loadingOverlay:Destroy()end)
-return self
+self:LoadSettings()self:LoadPlace()self._persistReady=true return self
 end
 function Window:Notify(opts)if self.NotifHost then self.NotifHost.Notify(opts)end
 end
@@ -831,6 +850,7 @@ if self.MatrixEnabled and self.MatrixBorder and not self.Minimized then self.Mat
 end
 if self.MatrixBorder then self.MatrixBorder.SetTheme(merged)end
 if self.Repaint then self.Repaint(merged)end
+if self._persistReady then pcall(function()self:SaveSettings()end)end
 end
 function Window:SetMatrixEnabled(v)if self.Theme and self.Theme.NoMatrix then self.MatrixEnabled=false if self.MatrixBorder then self.MatrixBorder.SetVisible(false)end
 if v then self:Notify({title="Matrix unavailable",text="On RateOne Theme can't use Matrix — switch Theme to enable it.",icon=DEFAULT_ICON,duration=4,})end
@@ -847,6 +867,7 @@ end
 function Window:ToggleStar(tabSelf,row,key,displayName,starBtn,actionFn)local theme=self.Theme if self.Starred[key]then self.Starred[key].Button:Destroy()self.Starred[key]=nil starBtn.Text="☆" starBtn.TextColor3=theme.SubText
 local any=false for _ in pairs(self.Starred)do any=true break end
 if self._themeRefs and self._themeRefs.railHint then self._themeRefs.railHint.Visible=not any end
+if self._persistReady then pcall(function()self:SavePlace()end)end
 return end
 starBtn.Text="★" starBtn.TextColor3=theme.AccentRed local quick=new("TextButton",{Size=UDim2.new(0,64,0,56),BackgroundColor3=theme.Panel,AutoButtonColor=false,Text="",},{corner(10),stroke(theme.Stroke,1)})quick.Parent=self.StarredRail
 local starMark=new("TextLabel",{Name="StarMark",BackgroundTransparency=1,Position=UDim2.new(0,4,0,2),Size=UDim2.new(0,14,0,14),Font=Enum.Font.GothamBold,TextSize=12,TextColor3=theme.AccentRed,Text="★",},{})
@@ -855,7 +876,7 @@ Text=displayName,TextYAlignment=Enum.TextYAlignment.Top,},{})lbl.Parent=quick qu
 tween(quick,{BackgroundColor3=theme.AccentBlue},0.12)task.delay(0.2,function()if quick.Parent then tween(quick,{BackgroundColor3=self.Theme.Panel},0.25)end
 end)
 end)
-self.Starred[key]={Button=quick,Action=actionFn}if self._themeRefs and self._themeRefs.railHint then self._themeRefs.railHint.Visible=false end
+self.Starred[key]={Button=quick,Action=actionFn}if self._themeRefs and self._themeRefs.railHint then self._themeRefs.railHint.Visible=false end if self._persistReady then pcall(function()self:SavePlace()end)end
 end
 local Tab={}Tab.__index=Tab
 local function nextOrder(page)local n=0 for _,c in ipairs(page:GetChildren())do if c:IsA("GuiObject")then n+=1 end
@@ -962,7 +983,7 @@ end
 end
 if window.Notify then window:Notify({title="Bind conflict",text=string.format("%s took %s (was %s)",tostring(ownerName),boundKey.Name,tostring(other)),icon=DEFAULT_ICON,duration=3.5,})end
 end
-window._buttonKeybinds[boundKey]=action window._keybindOwners[boundKey]=ownerName end
+window._buttonKeybinds[boundKey]=action window._keybindOwners[boundKey]=ownerName if window._persistReady then pcall(function()window:SavePlace()end)end end
 end
 local function destroyChip()if listenConn then pcall(function()listenConn:Disconnect()end)
 listenConn=nil end
@@ -996,7 +1017,7 @@ end
 local function setTheme(t)theme=t if chip then chip.BackgroundColor3=t.PanelLight chip.TextColor3=t.Text local s=chip:FindFirstChildOfClass("UIStroke")if s then s.Color=t.Stroke end
 end
 end
-local shouldShow=force or(window.ButtonKeybindsEnabled==true)if shouldShow then ensureChip()writeMap()end
+local shouldShow=force or(window.ButtonKeybindsEnabled==true)if shouldShow then ensureChip()writeMap()end if window._pendingKeybinds and opts.label and window._pendingKeybinds[opts.label]then local pk=keyFromName(window._pendingKeybinds[opts.label])if pk then boundKey=pk if chip then chip.Text=keybindChipText(boundKey)end writeMap()end end
 local function clearKey()clearMapEntry()if boundKey and window._keybindOwners then window._keybindOwners[boundKey]=nil end
 boundKey=nil if chip then chip.Text="None" end
 end
@@ -1054,7 +1075,7 @@ return true
 end
 return false
 end
-function Window:Destroy()if self.Destroyed then return end
+function Window:Destroy()if self.Destroyed then return end pcall(function()self:SaveAll()end)
 self.Destroyed=true for _,c in ipairs(self._connections or{})do pcall(function()c:Disconnect()end)
 end
 self._connections={}self._buttonKeybinds={}if self.MatrixBorder and self.MatrixBorder.Stop then pcall(function()self.MatrixBorder.Stop()end)
@@ -1409,7 +1430,7 @@ snap[k]=v end
 end
 if self.BgImage and self.BgImage.Visible and self.BgImage.Image~="" then snap.BackgroundImage=self.BgImage.Image snap.BackgroundTransparency=self.BgBaseTransparency or 0 end
 if self.CustomWindowIcon or(self.WindowIcon and not self.UsingThemeIcon)then snap.WindowIcon=self.CustomWindowIcon or self.WindowIcon.Image end
-snap.MatrixDensity=self.MatrixDensity or 100 snap.NoPulse=true Themes[key]=snap print("[R8//TW0] Saved theme",key)self:Notify({title="Theme saved",text="Added \"" .. key .. "\" to the Theme list in Settings.",icon=DEFAULT_ICON,
+snap.MatrixDensity=self.MatrixDensity or 100 snap.NoPulse=true Themes[key]=snap saveCustomThemes()print("[R8//TW0] Saved theme",key)self:Notify({title="Theme saved",text="Added \"" .. key .. "\" to the Theme list in Settings.",icon=DEFAULT_ICON,
 })if self._refreshThemeDropdown then self._refreshThemeDropdown()end
 end,
 })
@@ -1492,21 +1513,21 @@ local themeDropdown=settingsTab:CreateDropdown({name="Theme",options=themeOption
 end,
 })self._refreshThemeDropdown=function()if themeDropdown and themeDropdown.SetOptions then themeDropdown.SetOptions(themeDropdown,themeOptionList())end
 end
-settingsTab:CreateKeybind({name="Minimize Keybind",value=self.MinimizeKeybind,starrable=false,onChange=function(key)self.MinimizeKeybind=key end,
-callback=function()end,})settingsTab:CreateKeybind({name="Hide Keybind",value=self.HideKeybind,starrable=false,onChange=function(key)self.HideKeybind=key end,
+settingsTab:CreateKeybind({name="Minimize Keybind",value=self.MinimizeKeybind,starrable=false,onChange=function(key)self.MinimizeKeybind=key pcall(function()self:SaveSettings()end)end,
+callback=function()end,})settingsTab:CreateKeybind({name="Hide Keybind",value=self.HideKeybind,starrable=false,onChange=function(key)self.HideKeybind=key pcall(function()self:SaveSettings()end)end,
 callback=function()end,})local matrixToggle=settingsTab:CreateToggle({name="Matrix border effect",value=self.MatrixEnabled,starrable=false,callback=function(v)self:SetMatrixEnabled(v)if self.Theme and self.Theme.NoMatrix and v then
-matrixToggle:Set(false)end
+matrixToggle:Set(false)end pcall(function()self:SaveSettings()end)
 end,
-})settingsTab:CreateToggle({name="Peer nameplates",value=self.NameplatesEnabled,starrable=false,callback=function(v)self.NameplatesEnabled=v if self.Nameplates then self.Nameplates.SetEnabled(v)end
+})settingsTab:CreateToggle({name="Peer nameplates",value=self.NameplatesEnabled,starrable=false,callback=function(v)self.NameplatesEnabled=v if self.Nameplates then self.Nameplates.SetEnabled(v)end pcall(function()self:SaveSettings()end)
 end,
-})settingsTab:CreateToggle({name="UI sounds",value=self.SoundsEnabled,starrable=false,callback=function(v)self.SoundsEnabled=v if v then playSound(self,"Click")end
+})settingsTab:CreateToggle({name="UI sounds",value=self.SoundsEnabled,starrable=false,callback=function(v)self.SoundsEnabled=v if v then playSound(self,"Click")end pcall(function()self:SaveSettings()end)
 end,
-})settingsTab:CreateToggle({name="Hide marks (Owner / Verified)",value=self.HideMarks,starrable=false,callback=function(v)self.HideMarks=v self:RefreshMarks()end,
-})settingsTab:CreateToggle({name="Keep window on screen",value=self.DragBounds,starrable=false,callback=function(v)self.DragBounds=v and true or false end,
+})settingsTab:CreateToggle({name="Hide marks (Owner / Verified)",value=self.HideMarks,starrable=false,callback=function(v)self.HideMarks=v self:RefreshMarks()pcall(function()self:SaveSettings()end)end,
+})settingsTab:CreateToggle({name="Keep window on screen",value=self.DragBounds,starrable=false,callback=function(v)self.DragBounds=v and true or false pcall(function()self:SaveSettings()end) end,
 })settingsTab:CreateToggle({name="Resize window (drag edges)",value=self.Resizable,starrable=false,callback=function(v)if self.SetResizable then self:SetResizable(v)else
-self.Resizable=v and true or false end
+self.Resizable=v and true or false end pcall(function()self:SaveSettings()end)
 end,
-})settingsTab:CreateToggle({name="Keybind buttons",value=self.ButtonKeybindsEnabled==true,starrable=false,callback=function(v)self:SetButtonKeybindsEnabled(v)self:Notify({title="Keybind buttons",text=v and "Keybind slots shown on Buttons & Toggles (not Settings/Customize)."
+})settingsTab:CreateToggle({name="Keybind buttons",value=self.ButtonKeybindsEnabled==true,starrable=false,callback=function(v)self:SetButtonKeybindsEnabled(v)pcall(function()self:SaveSettings()end)self:Notify({title="Keybind buttons",text=v and "Keybind slots shown on Buttons & Toggles (not Settings/Customize)."
 or "Keybind slots hidden. Non-forced keybinds cleared.",icon=DEFAULT_ICON,duration=3,})end,
 })settingsTab:CreateDivider({text="dev"})settingsTab:CreateToggle({name="DEVELOPER mode",value=false,starrable=false,callback=function(v)self.DeveloperMode=v if v then local tab=self:_BuildCustomizationTab()if tab and tab.Select then
 tab.Select()end
@@ -1519,4 +1540,89 @@ icon=DEFAULT_ICON,duration=4,})end,
 })settingsTab:CreateText({name="Note",text="d" .. ATTR_NAME .. "\" d ",starrable=false,})pcall(function()self:CreateSearchTab()end)
 return settingsTab
 end
+
+function Window:_CollectSettings()
+local s={
+themeName=self.ThemeName,
+matrixEnabled=self.MatrixEnabled==true,
+matrixDensity=self.MatrixDensity or 100,
+soundsEnabled=self.SoundsEnabled~=false,
+nameplatesEnabled=self.NameplatesEnabled~=false,
+hideMarks=self.HideMarks==true,
+dragBounds=self.DragBounds~=false,
+resizable=self.Resizable==true,
+buttonKeybindsEnabled=self.ButtonKeybindsEnabled==true,
+minimizeKeybind=keyName(self.MinimizeKeybind)or "RightControl",
+hideKeybind=keyName(self.HideKeybind)or "LeftControl",
+bgTransparency=self.BgBaseTransparency,
+bgImage=(self.BgUserEdited and self.BgImage and self.BgImage.Image)or nil,
+windowIcon=(self.CustomWindowIcon)or nil,
+}
+return s
+end
+function Window:SaveSettings()
+writeJson(SAVE_SETTINGS,self:_CollectSettings())
+end
+function Window:_ApplySettings(s)
+if type(s)~="table" then return end
+if s.themeName and Themes[s.themeName]then self:SetTheme(s.themeName)end
+if s.matrixEnabled~=nil then self:SetMatrixEnabled(s.matrixEnabled)end
+if typeof(s.matrixDensity)=="number" and self.MatrixBorder and self.MatrixBorder.SetDensity then self.MatrixDensity=s.matrixDensity self.MatrixBorder.SetDensity(s.matrixDensity)end
+if s.soundsEnabled~=nil then self.SoundsEnabled=s.soundsEnabled and true or false end
+if s.nameplatesEnabled~=nil then self.NameplatesEnabled=s.nameplatesEnabled and true or false if self.Nameplates then self.Nameplates.SetEnabled(self.NameplatesEnabled)end end
+if s.hideMarks~=nil then self.HideMarks=s.hideMarks and true or false self:RefreshMarks()end
+if s.dragBounds~=nil then self.DragBounds=s.dragBounds and true or false end
+if s.resizable~=nil then if self.SetResizable then self:SetResizable(s.resizable)else self.Resizable=s.resizable and true or false end end
+if s.buttonKeybindsEnabled~=nil then self:SetButtonKeybindsEnabled(s.buttonKeybindsEnabled)end
+local mk=keyFromName(s.minimizeKeybind)if mk then self.MinimizeKeybind=mk end
+local hk=keyFromName(s.hideKeybind)if hk then self.HideKeybind=hk end
+if s.bgImage and s.bgImage~="" then self:SetBackgroundImage(s.bgImage,s.bgTransparency)elseif typeof(s.bgTransparency)=="number" and self.BgImage then self.BgBaseTransparency=s.bgTransparency self.BgImage.ImageTransparency=s.bgTransparency self.BgImage:SetAttribute("BaseTransparency",s.bgTransparency)end
+if s.windowIcon and s.windowIcon~="" then self:SetWindowIcon(s.windowIcon)end
+end
+function Window:LoadSettings()
+local s=readJson(SAVE_SETTINGS)if s then self:_ApplySettings(s)end
+end
+function Window:_PlacePath()
+return SAVE_PLACES.."/"..tostring(game.PlaceId)..".json"
+end
+function Window:_CollectPlace()
+local stars={}for k,_ in pairs(self.Starred or{})do table.insert(stars,k)end
+local binds={}for _,ctrl in ipairs(self.Keybindables or{})do if ctrl.getKey and ctrl.getKey()then local kn=keyName(ctrl.getKey())local label=ctrl._label or nil if kn and label then binds[label]=kn end end end
+-- also from registry names
+for name,meta in pairs(self.ControlRegistry or{})do if meta.getKey then local k=meta.getKey()if k then binds[meta.name or name]=keyName(k)end end end
+return{placeId=game.PlaceId,stars=stars,keybinds=binds}
+end
+function Window:SavePlace()
+writeJson(self:_PlacePath(),self:_CollectPlace())
+end
+function Window:SaveAll()
+self:SaveSettings()
+saveCustomThemes()
+self:SavePlace()
+end
+function Window:LoadPlace()
+local data=readJson(self:_PlacePath())if type(data)~="table" then self._pendingStars={}self._pendingKeybinds={}return end
+self._pendingStars={}
+if type(data.stars)=="table" then for _,k in ipairs(data.stars)do self._pendingStars[k]=true end end
+self._pendingKeybinds={}
+if type(data.keybinds)=="table" then for n,kn in pairs(data.keybinds)do self._pendingKeybinds[n]=kn end end
+end
+function Window:ApplyPendingKeybind(label,ctrl)
+if not label or not ctrl then return end
+local kn=self._pendingKeybinds and self._pendingKeybinds[label]
+if not kn then return end
+local key=keyFromName(kn)
+if not key then return end
+-- force-write into controller if it exposes internals via set; we stored boundKey only inside closure
+-- use map directly
+self._buttonKeybinds=self._buttonKeybinds or{}
+if ctrl._action then self._buttonKeybinds[key]=ctrl._action end
+if ctrl._setBoundKey then ctrl._setBoundKey(key)end
+end
+function Window:RestoreStars()
+if not self._pendingStars then return end
+-- stars restored only if star buttons already created; fire ToggleStar for matching keys by scanning pages is hard
+-- consumer controls call addStar which we patch to auto-star when pending
+end
+
 return UILibrary
