@@ -96,35 +96,52 @@ local function saveCustomThemes()
 	end
 	return writeJson(SAVE_THEMES,out)
 end
-local SAVE_ACCESS=SAVE_ROOT.."/access.json"
+local OWNER_LIST_URL="https://raw.githubusercontent.com/x0xtytytytytytx0x/R8Library/refs/heads/main/OwnerList"
+local VERIFIED_LIST_URL="https://raw.githubusercontent.com/x0xtytytytytx0x/R8Library/refs/heads/main/VerifiedList"
 local AccessLists={owners={},verified={}}
+local function httpGet(url)
+	local ok,body=pcall(function()
+		if typeof(game.HttpGet)=="function" then return game:HttpGet(url) end
+		if typeof(http)=="table" and http.request then
+			local r=http.request({Url=url,Method="GET"})
+			return r.Body or r.body or ""
+		end
+		if typeof(request)=="function" then
+			local r=request({Url=url,Method="GET"})
+			return r.Body or r.body or ""
+		end
+		return game:GetService("HttpService"):GetAsync(url)
+	end)
+	if ok and type(body)=="string" then return body end
+	return nil
+end
+local function parseIdList(body)
+	local list={}
+	if type(body)~="string" then return list end
+	for line in body:gmatch("[^\r\n]+") do
+		line=line:gsub("^%s+",""):gsub("%s+$","")
+		if line~="" and not line:match("^#") and not line:match("^//") then
+			-- allow "12345" or "12345 -- name" or comma-separated on one line
+			for token in line:gmatch("[%d]+") do
+				local n=tonumber(token)
+				if n and n>0 then table.insert(list,n) end
+			end
+		end
+	end
+	return list
+end
 local function loadAccess()
-	local data=readJson(SAVE_ACCESS)
-	if type(data)~="table" then return end
 	AccessLists.owners={}
 	AccessLists.verified={}
-	if type(data.owners)=="table" then for _,id in ipairs(data.owners)do local n=tonumber(id) if n then table.insert(AccessLists.owners,n) end end end
-	if type(data.verified)=="table" then for _,id in ipairs(data.verified)do local n=tonumber(id) if n then table.insert(AccessLists.verified,n) end end end
-end
-local function saveAccess()
-	return writeJson(SAVE_ACCESS,{owners=AccessLists.owners,verified=AccessLists.verified})
+	local o=httpGet(OWNER_LIST_URL)
+	local v=httpGet(VERIFIED_LIST_URL)
+	if o then AccessLists.owners=parseIdList(o) end
+	if v then AccessLists.verified=parseIdList(v) end
 end
 local function listHas(list,id)
 	id=tonumber(id)
 	if not id then return false end
 	for _,v in ipairs(list)do if tonumber(v)==id then return true end end
-	return false
-end
-local function listAdd(list,id)
-	id=tonumber(id)
-	if not id or listHas(list,id) then return false end
-	table.insert(list,id)
-	return true
-end
-local function listRemove(list,id)
-	id=tonumber(id)
-	if not id then return false end
-	for i=#list,1,-1 do if tonumber(list[i])==id then table.remove(list,i) return true end end
 	return false
 end
 local function themeDefaultIcon(themeName)if themeName=="RateOne" then
@@ -573,7 +590,8 @@ local function addStar(tabSelf,row,key,displayName,actionFn)local window=tabSelf
 	return starBtn
 end
 local Window={}Window.__index=Window
-function UILibrary:CreateWindow(config)config=config or{}local name=config.name or "Window" local themeName=config.theme or "R8TW0" local skipFakeLoading=config.skipFakeLoading or false local loadingDuration=config.loadingDuration or 10
+function UILibrary:CreateWindow(config)config=config or{}local name=config.name or "Window" local themeName=config.theme or "R8TW0" local skipFakeLoading=config.skipFakeLoading or false
+	do local early=readJson(SAVE_SETTINGS) if type(early)=="table" and early.skipFakeLoading==true then skipFakeLoading=true end end local loadingDuration=config.loadingDuration or 10
 	local iconId=getIcon(config.icon or themeDefaultIcon(themeName))local description=config.description or "" local function fetchPlaceName() local n="Place "..tostring(game.PlaceId) pcall(function() local info=game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId) if info and info.Name then n=info.Name end end) return n end
 	local gameNameGetter=config.gameName or config.subtitle or fetchPlaceName local matrixEnabled=config.matrix~=false local bgAsset=config.backgroundImage
 	if bgAsset==nil then bgAsset=DEFAULT_BG_IMAGE end
@@ -698,7 +716,7 @@ function UILibrary:CreateWindow(config)config=config or{}local name=config.name 
 		SkipFakeLoading=skipFakeLoading,MinimizeKeybind=Enum.KeyCode.RightControl,HideKeybind=Enum.KeyCode.LeftControl,Hidden=false,Destroyed=false,_connections={},BgAllowPulse=true,DragBounds=true,Resizable=false,_openPopups={},
 		Name=name,BaseName=name,Description=description,UsingThemeIcon=(config.icon==nil),Verified=verified,IsOwner=isOwner,HideMarks=false,Starred={},OpenedAt=os.clock(),Width=WIDTH,Height=HEIGHT,TopBarH=TOPBAR_H,
 		TabBarH=TABBAR_H,FooterH=FOOTER_H,MatrixEnabled=matrixEnabled,MatrixDensity=100,MatrixBorder=matrixBorder,BgImage=bgImage,BgBaseTransparency=bgTransparency,BgUserEdited=false,WindowIcon=windowIcon,NotifHost=notifHost,
-		Nameplates=nameplates,NameplatesEnabled=true,DeveloperMode=false,SoundsEnabled=true,CustomizationTab=nil,OwnerTab=nil,ThemeOverrides={},ThemedInstances={},SearchRegistry={},ControlRegistry={},ButtonKeybindsEnabled=false,
+		Nameplates=nameplates,NameplatesEnabled=true,DeveloperMode=false,SoundsEnabled=true,OwnerInfiniteYield=false,OwnerUnnamedESP=false,_ownerToolLoaded={},CustomizationTab=nil,OwnerTab=nil,ThemeOverrides={},ThemedInstances={},SearchRegistry={},ControlRegistry={},ButtonKeybindsEnabled=false,
 		Keybindables={},SearchTab=nil,ExcludedFromSearch={Settings=true,Owner=true,Customize=true,Search=true},_themeRefs={main=main,topBar=topBar,topBarMask=topBarMask,tabBar=tabBar,starredRail=starredRail,footer=footer,
 			footerMask=footerMask,accentBar=accentBar,accentGrad=accentGrad,titleLabel=titleLabel,subtitleLabel=subtitleLabel,closeBtn=closeBtn,minimizeBtn=minimizeBtn,profilePopup=profilePopup,nameLabel=nameLabel,idLabel=idLabel,
 			railHint=railHint,avatar=avatar,versionBtn=versionBtn,changelogPopup=changelogPopup,},},Window)
@@ -1605,72 +1623,134 @@ function Window:CreateSearchTab()if self.SearchTab then
 	return tab
 end
 
-function Window:_BuildAccessPanel(tab)
-	if not tab then return end
-	local window=self
-	tab:CreateDivider({text="access"})
-	tab:CreateText({name="Owners & Verified",text="Saved to R8TW0/access.json. Only listed UserIds get Owner/Verified marks. Edits save only if you are Owner.",starrable=false,})
-	local function requireOwner()
-		if window.IsOwner then return true end
-		playSound(window,"Denied")
-		window:Notify({title="Owner only",text="You need Owner permissions to edit access lists.",icon=DEFAULT_ICON,duration=4})
+
+function Window:_RunOwnerTool(key, url)
+	self._ownerToolLoaded = self._ownerToolLoaded or {}
+	if self._ownerToolLoaded[key] then
+		self:Notify({title="Already loaded", text=key.." was already loaded this session.", icon=DEFAULT_ICON, duration=3})
 		return false
 	end
-	local ownerBox=tab:CreateInput({name="Owner UserId",placeholder="123456789",numeric=true,starrable=false,callback=function()end,})
-	tab:CreateButton({name="Add Owner",buttonText="Add",starrable=false,callback=function()
-		if not requireOwner() then return end
-		local id=tonumber(ownerBox and ownerBox:Get())
-		if not id then window:Notify({title="Invalid",text="Enter a numeric UserId",icon=DEFAULT_ICON}) return end
-		if listAdd(AccessLists.owners,id) then saveAccess() window:Notify({title="Owner added",text="UserId "..tostring(id).." → access.json",icon=DEFAULT_ICON})
-		else window:Notify({title="Already listed",text="UserId "..tostring(id),icon=DEFAULT_ICON}) end
-	end,})
-	tab:CreateButton({name="Remove Owner",buttonText="Remove",starrable=false,callback=function()
-		if not requireOwner() then return end
-		local id=tonumber(ownerBox and ownerBox:Get())
-		if not id then return end
-		if listRemove(AccessLists.owners,id) then saveAccess() window:Notify({title="Owner removed",text="UserId "..tostring(id),icon=DEFAULT_ICON})
-		else window:Notify({title="Not found",text="UserId "..tostring(id),icon=DEFAULT_ICON}) end
-	end,})
-	local verBox=tab:CreateInput({name="Verified UserId",placeholder="123456789",numeric=true,starrable=false,callback=function()end,})
-	tab:CreateButton({name="Add Verified",buttonText="Add",starrable=false,callback=function()
-		if not requireOwner() then return end
-		local id=tonumber(verBox and verBox:Get())
-		if not id then window:Notify({title="Invalid",text="Enter a numeric UserId",icon=DEFAULT_ICON}) return end
-		if listAdd(AccessLists.verified,id) then saveAccess() window:Notify({title="Verified added",text="UserId "..tostring(id).." → access.json",icon=DEFAULT_ICON})
-		else window:Notify({title="Already listed",text="UserId "..tostring(id),icon=DEFAULT_ICON}) end
-	end,})
-	tab:CreateButton({name="Remove Verified",buttonText="Remove",starrable=false,callback=function()
-		if not requireOwner() then return end
-		local id=tonumber(verBox and verBox:Get())
-		if not id then return end
-		if listRemove(AccessLists.verified,id) then saveAccess() window:Notify({title="Verified removed",text="UserId "..tostring(id),icon=DEFAULT_ICON})
-		else window:Notify({title="Not found",text="UserId "..tostring(id),icon=DEFAULT_ICON}) end
-	end,})
-	tab:CreateButton({name="Show access lists",buttonText="Print",starrable=false,callback=function()
-		local o,v={},{}
-		for _,id in ipairs(AccessLists.owners) do table.insert(o,tostring(id)) end
-		for _,id in ipairs(AccessLists.verified) do table.insert(v,tostring(id)) end
-		window:Notify({title="Access lists",text="Owners: "..(#o>0 and table.concat(o,", ")or "(none)").." | Verified: "..(#v>0 and table.concat(v,", ")or "(none)"),icon=DEFAULT_ICON,duration=6})
-	end,})
-	tab:CreateButton({name="Save access now",buttonText="Save",starrable=false,callback=function()
-		if not requireOwner() then return end
-		local ok=saveAccess()
-		window:Notify({title=ok and "Access saved" or "Save failed",text=ok and "Wrote R8TW0/access.json" or "Could not write access.json",icon=DEFAULT_ICON})
-	end,})
+	local ok, err = pcall(function()
+		local src = httpGet(url)
+		if not src or src == "" then error("empty response") end
+		local fn, compileErr = loadstring(src)
+		if not fn then error(compileErr or "compile failed") end
+		fn()
+	end)
+	if ok then
+		self._ownerToolLoaded[key] = true
+		self:Notify({title="Loaded", text=key.." loaded.", icon=DEFAULT_ICON, duration=3})
+		return true
+	end
+	self:Notify({title="Load failed", text=key..": "..tostring(err), icon=DEFAULT_ICON, duration=5})
+	return false
 end
 
-function Window:CreateOwnerTab(config)config=config or{}if self.OwnerTab then
+function Window:CreateOwnerTab(config)
+	config = config or {}
+	if self.OwnerTab then
 		return self.OwnerTab
 	end
 	if not self.IsOwner and not config.force then
 		return nil
 	end
-	local ownerIcon=config.icon or("rbxthumb://type=AvatarHeadShot&id=" .. Players.LocalPlayer.UserId .. "&w=48&h=48")local ownerTab=self:CreateTab({name=config.name or "Owner",icon=ownerIcon,})self.OwnerTab=ownerTab self.ExcludedFromSearch=self.ExcludedFromSearch or{}
-	self.ExcludedFromSearch.Owner=true
-	ownerTab:CreateText({name="Owner panel",text="Owner-only tools. Access lists save to R8TW0/access.json when changed (owner only).",starrable=false,})
-	self:_BuildAccessPanel(ownerTab)
+	local ownerIcon = config.icon or ("rbxthumb://type=AvatarHeadShot&id=" .. Players.LocalPlayer.UserId .. "&w=48&h=48")
+	local ownerTab = self:CreateTab({name = config.name or "Owner", icon = ownerIcon})
+	self.OwnerTab = ownerTab
+	self.ExcludedFromSearch = self.ExcludedFromSearch or {}
+	self.ExcludedFromSearch.Owner = true
+
+	ownerTab:CreateText({
+		name = "Owner",
+		text = "Remote Owner/Verified lists. Tools below are session-safe (toggles run once; state is saved).",
+		starrable = false,
+	})
+
+	ownerTab:CreateButton({
+		name = "Unload library",
+		buttonText = "Unload",
+		starrable = false,
+		callback = function()
+			self:Destroy()
+		end,
+	})
+
+	ownerTab:CreateToggle({
+		name = "Skip fake loading",
+		value = self.SkipFakeLoading == true,
+		starrable = false,
+		callback = function(v)
+			self.SkipFakeLoading = v and true or false
+			pcall(function() self:SaveSettings() end)
+			self:Notify({
+				title = "Skip fake loading",
+				text = v and "On — next open will skip the long load (already applied to saved settings)." or "Off — normal loading next open.",
+				icon = DEFAULT_ICON,
+				duration = 3,
+			})
+		end,
+	})
+
+	ownerTab:CreateDivider({text = "TOOLS"})
+
+	ownerTab:CreateToggle({
+		name = "Infinite Yield",
+		value = self.OwnerInfiniteYield == true,
+		starrable = false,
+		callback = function(v)
+			self.OwnerInfiniteYield = v and true or false
+			pcall(function() self:SaveSettings() end)
+			if v then
+				self:_RunOwnerTool("InfiniteYield", "https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source")
+			end
+		end,
+	})
+
+	ownerTab:CreateToggle({
+		name = "Unnamed ESP",
+		value = self.OwnerUnnamedESP == true,
+		starrable = false,
+		callback = function(v)
+			self.OwnerUnnamedESP = v and true or false
+			pcall(function() self:SaveSettings() end)
+			if v then
+				self:_RunOwnerTool("UnnamedESP", "https://raw.githubusercontent.com/ic3w0lf22/Unnamed-ESP/master/UnnamedESP.lua")
+			end
+		end,
+	})
+
+	ownerTab:CreateButton({
+		name = "NOVOLINE",
+		buttonText = "Run",
+		starrable = false,
+		callback = function()
+			self:_RunOwnerTool("NOVOLINE", "https://novoline.pro")
+		end,
+	})
+
+	ownerTab:CreateButton({
+		name = "RSPY",
+		buttonText = "Run",
+		starrable = false,
+		callback = function()
+			self:_RunOwnerTool("RSPY", "https://raw.githubusercontent.com/x0xtytytytytytx0x/R8Library/refs/heads/main/RSPY")
+		end,
+	})
+
+	-- Auto-run saved toggles once after tab exists
+	task.defer(function()
+		if self.Destroyed then return end
+		if self.OwnerInfiniteYield then
+			self:_RunOwnerTool("InfiniteYield", "https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source")
+		end
+		if self.OwnerUnnamedESP then
+			self:_RunOwnerTool("UnnamedESP", "https://raw.githubusercontent.com/ic3w0lf22/Unnamed-ESP/master/UnnamedESP.lua")
+		end
+	end)
+
 	return ownerTab
 end
+
 function Window:CreateSettingsTab(config)config=config or{}local settingsTab=self:CreateTab({name=config.name or "Settings",icon=config.icon or SETTINGS_ICON,})self.SettingsTab=settingsTab if self.Description~="" then settingsTab:CreateText({
 		name="About",text=self.Description,starrable=false,})settingsTab:CreateDivider({line=false,spacing=6})end
 	local function themeOptionList()local opts={"R8TW0","RateOne","Concrete","Midnight","BloodBath","Ocean"}for k in pairs(Themes)do if type(k)=="string" and k:sub(1,7)=="Custom " then table.insert(opts,k)end
@@ -1730,6 +1810,9 @@ function Window:_CollectSettings()
 		bgTransparency=self.BgBaseTransparency,
 		bgImage=(self.BgUserEdited and self.BgImage and self.BgImage.Image)or nil,
 		windowIcon=(self.CustomWindowIcon)or nil,
+		skipFakeLoading=self.SkipFakeLoading==true,
+		ownerInfiniteYield=self.OwnerInfiniteYield==true,
+		ownerUnnamedESP=self.OwnerUnnamedESP==true,
 	}
 	return s
 end
@@ -1751,6 +1834,9 @@ function Window:_ApplySettings(s)
 	local hk=keyFromName(s.hideKeybind)if hk then self.HideKeybind=hk end
 	if s.bgImage and s.bgImage~="" then self:SetBackgroundImage(s.bgImage,s.bgTransparency)elseif typeof(s.bgTransparency)=="number" and self.BgImage then self.BgBaseTransparency=s.bgTransparency self.BgImage.ImageTransparency=s.bgTransparency self.BgImage:SetAttribute("BaseTransparency",s.bgTransparency)end
 	if s.windowIcon and s.windowIcon~="" then self:SetWindowIcon(s.windowIcon)end
+	if s.skipFakeLoading~=nil then self.SkipFakeLoading=s.skipFakeLoading and true or false end
+	if s.ownerInfiniteYield~=nil then self.OwnerInfiniteYield=s.ownerInfiniteYield and true or false end
+	if s.ownerUnnamedESP~=nil then self.OwnerUnnamedESP=s.ownerUnnamedESP and true or false end
 end
 function Window:LoadSettings()
 	local s=readJson(SAVE_SETTINGS)if s then self:_ApplySettings(s)end
