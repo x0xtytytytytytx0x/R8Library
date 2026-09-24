@@ -52,18 +52,83 @@ local SAVE_SETTINGS=SAVE_ROOT.."/settings.json"
 local SAVE_THEMES=SAVE_ROOT.."/themes.json"
 local SAVE_PLACES=SAVE_ROOT.."/places"
 local function fsOk()return typeof(writefile)=="function" and typeof(readfile)=="function" end
-local function ensureDir(p)if not fsOk()then return end pcall(function()if typeof(isfolder)=="function" and not isfolder(p)then makefolder(p)end end)end
+local function ensureDir(p)if not fsOk()then return end pcall(function()if typeof(isfolder)=="function" then if not isfolder(p)then makefolder(p)end else makefolder(p)end end)end
 local function jsonEnc(t)local ok,r=pcall(function()return game:GetService("HttpService"):JSONEncode(t)end)return ok and r or nil end
 local function jsonDec(s)if type(s)~="string" or s=="" then return nil end local ok,r=pcall(function()return game:GetService("HttpService"):JSONDecode(s)end)return ok and r or nil end
 local function readJson(path)if not fsOk()then return nil end local ok,data=pcall(function()if typeof(isfile)=="function" and not isfile(path)then return nil end return readfile(path)end)if not ok or not data then return nil end return jsonDec(data)end
-local function writeJson(path,tbl)if not fsOk()then return false end ensureDir(SAVE_ROOT)ensureDir(SAVE_PLACES)local s=jsonEnc(tbl)if not s then return false end local ok=pcall(function()writefile(path,s)end)return ok end
+local function writeJson(path,tbl)if not fsOk()then return false end ensureDir(SAVE_ROOT)ensureDir(SAVE_PLACES)local s=jsonEnc(tbl)if not s then print("[R8//TW0] JSONEncode failed for",path)return false end local ok,err=pcall(function()writefile(path,s)end)if not ok then print("[R8//TW0] writefile failed",path,err)end return ok==true end
 local function colorToT(c)if typeof(c)~="Color3" then return nil end return{r=c.R,g=c.G,b=c.B}end
 local function tToColor(t)if type(t)~="table" then return nil end return Color3.new(tonumber(t.r)or 1,tonumber(t.g)or 1,tonumber(t.b)or 1)end
 local function keyName(k)if typeof(k)=="EnumItem" then return k.Name end if type(k)=="string" then return k end return nil end
 local function keyFromName(n)if type(n)~="string" or n=="" or n=="Unknown" then return nil end local ok,k=pcall(function()return Enum.KeyCode[n]end)if ok and k then return k end return nil end
-local function loadCustomThemes()local data=readJson(SAVE_THEMES)if type(data)~="table" then return end for name,snap in pairs(data)do if type(name)=="string" and type(snap)=="table" then local t={}for k,v in pairs(snap)do if type(v)=="table" and v.r~=nil then t[k]=tToColor(v)else t[k]=v end end Themes[name]=t end end end
-local function saveCustomThemes()local out={}for k,v in pairs(Themes)do if type(k)=="string" and k:sub(1,7)=="Custom " and type(v)=="table" then local snap={}for ck,cv in pairs(v)do if typeof(cv)=="Color3" then snap[ck]=colorToT(cv)else snap[ck]=cv end end out[k]=snap end end writeJson(SAVE_THEMES,out)end
+local function themeSnapToJson(snap)
+local out={}
+if type(snap)~="table" then return out end
+for ck,cv in pairs(snap)do
+if typeof(cv)=="Color3" then out[ck]=colorToT(cv)
+elseif type(cv)=="table" and cv.r~=nil then out[ck]={r=tonumber(cv.r)or 1,g=tonumber(cv.g)or 1,b=tonumber(cv.b)or 1}
+elseif type(cv)=="boolean" or type(cv)=="number" or type(cv)=="string" then out[ck]=cv
+end
+end
+return out
+end
+local function themeJsonToSnap(data)
+local t={}
+if type(data)~="table" then return t end
+for k,v in pairs(data)do
+if type(v)=="table" and v.r~=nil then t[k]=tToColor(v)else t[k]=v end
+end
+return t
+end
+local function loadCustomThemes()
+local data=readJson(SAVE_THEMES)
+if type(data)~="table" then return end
+for name,snap in pairs(data)do
+if type(name)=="string" and type(snap)=="table" then Themes[name]=themeJsonToSnap(snap)end
+end
+end
+local function saveCustomThemes()
+local out={}
+for k,v in pairs(Themes)do
+if type(k)=="string" and k:sub(1,7)=="Custom " and type(v)=="table" then out[k]=themeSnapToJson(v)end
+end
+local ok=writeJson(SAVE_THEMES,out)
+return ok
+end
+-- Access lists (owners + verified) persisted locally
+local SAVE_ACCESS=SAVE_ROOT.."/access.json"
+local AccessLists={owners={},verified={}}
+local function loadAccess()
+local data=readJson(SAVE_ACCESS)
+if type(data)~="table" then return end
+AccessLists.owners={}
+AccessLists.verified={}
+if type(data.owners)=="table" then for _,id in ipairs(data.owners)do local n=tonumber(id)if n then table.insert(AccessLists.owners,n)end end end
+if type(data.verified)=="table" then for _,id in ipairs(data.verified)do local n=tonumber(id)if n then table.insert(AccessLists.verified,n)end end end
+end
+local function saveAccess()
+return writeJson(SAVE_ACCESS,{owners=AccessLists.owners,verified=AccessLists.verified})
+end
+local function listHas(list,id)
+id=tonumber(id)
+if not id then return false end
+for _,v in ipairs(list)do if tonumber(v)==id then return true end end
+return false
+end
+local function listAdd(list,id)
+id=tonumber(id)
+if not id or listHas(list,id)then return false end
+table.insert(list,id)
+return true
+end
+local function listRemove(list,id)
+id=tonumber(id)
+if not id then return false end
+for i=#list,1,-1 do if tonumber(list[i])==id then table.remove(list,i)return true end end
+return false
+end
 loadCustomThemes()
+loadAccess()
 local function themeDefaultIcon(themeName)if themeName=="RateOne" then
 return RATEONE_ICON
 end
@@ -509,18 +574,29 @@ return starBtn
 end
 local Window={}Window.__index=Window
 function UILibrary:CreateWindow(config)config=config or{}local name=config.name or "Window" local themeName=config.theme or "R8TW0" local skipFakeLoading=config.skipFakeLoading or false local loadingDuration=config.loadingDuration or 10
-local iconId=getIcon(config.icon or themeDefaultIcon(themeName))local description=config.description or "" local gameNameGetter=config.gameName or config.subtitle or game.Name local matrixEnabled=config.matrix~=false local bgAsset=config.backgroundImage
+local iconId=getIcon(config.icon or themeDefaultIcon(themeName))local description=config.description or "" local function fetchPlaceName()
+local n=tostring(game.PlaceId)
+pcall(function()
+local info=game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId)
+if info and info.Name then n=info.Name end
+end)
+return n
+end
+local gameNameGetter=config.gameName or config.subtitle or fetchPlaceName local matrixEnabled=config.matrix~=false local bgAsset=config.backgroundImage
 if bgAsset==nil then bgAsset=DEFAULT_BG_IMAGE end
 local bgTransparency=config.backgroundImageTransparency or 0.86 local LocalPlayer=Players.LocalPlayer if not LocalPlayer then warn("UILibrary:CreateWindow must be called from a LocalScript in Play mode.")
 return nil
 end
 local PlayerGui=LocalPlayer:WaitForChild("PlayerGui")pcall(function()LocalPlayer:SetAttribute(ATTR_NAME,true)end)
 local existing=PlayerGui:FindFirstChild("UILibrary_" .. name)if existing then existing:Destroy()end
-local verified=false if config.verifiedUserIds then for _,id in ipairs(config.verifiedUserIds)do if id==LocalPlayer.UserId then verified=true end
-end
-elseif config.verified then
-verified=true end
-local isOwner=LocalPlayer.UserId==OWNER_USER_ID if isOwner then verified=true end
+local verified=false
+local isOwner=LocalPlayer.UserId==OWNER_USER_ID or listHas(AccessLists.owners,LocalPlayer.UserId)
+if config.ownerUserIds then for _,id in ipairs(config.ownerUserIds)do if tonumber(id)==LocalPlayer.UserId then isOwner=true end end end
+if isOwner then verified=true end
+if not verified and config.verifiedUserIds then for _,id in ipairs(config.verifiedUserIds)do if tonumber(id)==LocalPlayer.UserId then verified=true end end end
+if not verified and listHas(AccessLists.verified,LocalPlayer.UserId)then verified=true end
+-- config.verified = true only if explicitly forced for this session (opt-in, not default)
+if not verified and config.verified==true then verified=true end
 local screenGui=new("ScreenGui",{Name="UILibrary_" .. name,ResetOnSpawn=false,ZIndexBehavior=Enum.ZIndexBehavior.Sibling,IgnoreGuiInset=false,})screenGui.Parent=PlayerGui local theme=Themes[themeName]or Themes.R8TW0 local loadingOverlay,totalLoadDuration,loadingSound=buildLoadingScreen(
 screenGui,theme,brandTitle(themeName,name),themeDefaultIcon(themeName),loadingDuration,
 function()
@@ -547,7 +623,14 @@ BackgroundColor3=theme.AccentBlue,BorderSizePixel=0,Size=UDim2.new(1,0,0,2),Posi
 accentGrad.Parent=accentBar local windowIcon=new("ImageLabel",{Position=UDim2.new(0,12,0.5,-13),Size=UDim2.new(0,26,0,26),BackgroundTransparency=1,Image=iconId,ZIndex=4,},{})windowIcon.Parent=topBar local titleLabel=new("TextLabel",{
 Name="Title",BackgroundTransparency=1,Position=UDim2.new(0,46,0,4),Size=UDim2.new(0.5,0,0,20),Font=Enum.Font.GothamBold,TextSize=15,TextColor3=theme.Text,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=4,Text=brandTitle(themeName,name),
 },{})titleLabel.Parent=topBar local resolvedGameName=typeof(gameNameGetter)=="function" and gameNameGetter()or tostring(gameNameGetter)local subtitleLabel=new("TextLabel",{Name="Subtitle",BackgroundTransparency=1,Position=UDim2.new(0,46,0,22),
-Size=UDim2.new(0.55,0,0,16),Font=Enum.Font.Gotham,TextSize=12,TextColor3=theme.SubText,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=4,Visible=true,Text=resolvedGameName,},{})subtitleLabel.Parent=topBar local closeBtn=new("TextButton",{
+Size=UDim2.new(0.55,0,0,16),Font=Enum.Font.Gotham,TextSize=12,TextColor3=theme.SubText,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=4,Visible=true,Text=resolvedGameName,},{})subtitleLabel.Parent=topBar
+task.spawn(function()
+local ok,info=pcall(function()return game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId)end)
+if ok and info and info.Name then
+subtitleLabel.Text=info.Name
+if profilePlaceName then profilePlaceName.Text=info.Name end
+end
+end) local closeBtn=new("TextButton",{
 Name="CloseButton",BackgroundColor3=theme.Panel,Position=UDim2.new(1,-38,0,9),Size=UDim2.new(0,28,0,28),Font=Enum.Font.GothamBold,TextSize=16,TextColor3=theme.Text,Text="X",AutoButtonColor=false,ZIndex=4,},{corner(6)})
 closeBtn.Parent=topBar local minimizeBtn=new("TextButton",{Name="MinimizeButton",BackgroundColor3=theme.Panel,Position=UDim2.new(1,-72,0,9),Size=UDim2.new(0,28,0,28),Font=Enum.Font.GothamBold,TextSize=16,TextColor3=theme.Text,
 Text="_",AutoButtonColor=false,ZIndex=4,},{corner(6)})minimizeBtn.Parent=topBar for _,btn in ipairs({closeBtn,minimizeBtn})do btn.MouseEnter:Connect(function()tween(btn,{BackgroundColor3=theme.PanelLight},0.12)end)
@@ -588,17 +671,39 @@ TextYAlignment=Enum.TextYAlignment.Top,TextWrapped=true,Text=table.concat(notes,
 versionBtn.MouseButton1Click:Connect(function()changelogPopup.Visible=not changelogPopup.Visible if changelogPopup.Visible then profilePopup.Visible=false end
 playSound(self,changelogPopup.Visible and "AddUI" or "RemoveUI")end)
 clClose.MouseButton1Click:Connect(function()changelogPopup.Visible=false end)
-local profilePopup=new("Frame",{Name="ProfilePopup",AnchorPoint=Vector2.new(0,1),Position=UDim2.new(0,8,1,-(FOOTER_H+8)),Size=UDim2.new(0,260,0,200),BackgroundColor3=theme.PanelLight,Visible=false,ZIndex=15,BorderSizePixel=0,
-},{corner(10),stroke(theme.Stroke,1),pad(12,12,12,12)})profilePopup.Parent=main
-local function profileLine(y,text)
-return new("TextLabel",{
-BackgroundTransparency=1,Position=UDim2.new(0,0,0,y),Size=UDim2.new(1,0,0,16),Font=Enum.Font.Gotham,TextSize=11,TextColor3=theme.SubText,TextXAlignment=Enum.TextXAlignment.Left,Text=text,},{})end
-new("TextLabel",{BackgroundTransparency=1,Size=UDim2.new(1,-24,0,18),Font=Enum.Font.GothamBold,TextSize=13,TextColor3=theme.Text,TextXAlignment=Enum.TextXAlignment.Left,Text=LocalPlayer.Name ..(verified and "  ✓ Verified" or ""),
-},{}).Parent=profilePopup profileLine(22,"User ID: " .. LocalPlayer.UserId).Parent=profilePopup profileLine(40,"Display: " ..(LocalPlayer.DisplayName or LocalPlayer.Name)).Parent=profilePopup local ageText="Account age: —" pcall(function()
-ageText="Account age: " .. tostring(LocalPlayer.AccountAge).. " days" end)
-profileLine(58,ageText).Parent=profilePopup local profileTime=profileLine(76,"Session: 0m 0s")profileTime.Parent=profilePopup profileLine(94,verified and "Status: Verified ★" or "Status: Standard").Parent=profilePopup profileLine(112,"Owner: " ..(isOwner and "true" or "false")).Parent=profilePopup
-profileLine(130,"Game: " .. tostring(game.Name)).Parent=profilePopup profileLine(148,"PlaceId: " .. tostring(game.PlaceId)).Parent=profilePopup local closeProfileBtn=new("TextButton",{AnchorPoint=Vector2.new(1,0),Position=UDim2.new(1,0,0,0),
-Size=UDim2.new(0,20,0,20),BackgroundTransparency=1,Font=Enum.Font.GothamBold,TextSize=14,TextColor3=theme.SubText,Text="X",},{})closeProfileBtn.Parent=profilePopup local notifHost=createNotificationHost(screenGui,theme)
+local profilePopup=new("Frame",{Name="ProfilePopup",AnchorPoint=Vector2.new(0,1),Position=UDim2.new(0,8,1,-(FOOTER_H+8)),Size=UDim2.new(0,420,0,248),BackgroundColor3=theme.PanelLight,Visible=false,ZIndex=15,BorderSizePixel=0,},{corner(10),stroke(theme.Stroke,1)})
+profilePopup.Parent=main
+-- left: game / server | right: personal
+local leftCol=new("Frame",{Name="GameCol",BackgroundTransparency=1,Position=UDim2.new(0,12,0,36),Size=UDim2.new(0.48,-16,1,-48),ZIndex=16},{})
+leftCol.Parent=profilePopup
+local rightCol=new("Frame",{Name="PlayerCol",BackgroundTransparency=1,Position=UDim2.new(0.52,0,0,36),Size=UDim2.new(0.48,-12,1,-48),ZIndex=16},{})
+rightCol.Parent=profilePopup
+local div=new("Frame",{BackgroundColor3=theme.Stroke,BorderSizePixel=0,Position=UDim2.new(0.5,-0.5,0,40),Size=UDim2.new(0,1,1,-52),ZIndex=16},{})
+div.Parent=profilePopup
+local function colLine(parent,y,label,value,valueName)
+local l=new("TextLabel",{BackgroundTransparency=1,Position=UDim2.new(0,0,0,y),Size=UDim2.new(1,0,0,14),Font=Enum.Font.Gotham,TextSize=10,TextColor3=theme.SubText,TextXAlignment=Enum.TextXAlignment.Left,Text=label,ZIndex=17},{})
+l.Parent=parent
+local v=new("TextLabel",{Name=valueName or "",BackgroundTransparency=1,Position=UDim2.new(0,0,0,y+13),Size=UDim2.new(1,0,0,15),Font=Enum.Font.GothamMedium,TextSize=12,TextColor3=theme.Text,TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd,Text=value,ZIndex=17},{})
+v.Parent=parent
+return v
+end
+new("TextLabel",{BackgroundTransparency=1,Position=UDim2.new(0,12,0,10),Size=UDim2.new(0.5,-20,0,18),Font=Enum.Font.GothamBold,TextSize=13,TextColor3=theme.Text,TextXAlignment=Enum.TextXAlignment.Left,Text="Game / Server",ZIndex=17},{}).Parent=profilePopup
+new("TextLabel",{BackgroundTransparency=1,Position=UDim2.new(0.52,0,0,10),Size=UDim2.new(0.48,-28,0,18),Font=Enum.Font.GothamBold,TextSize=13,TextColor3=theme.Text,TextXAlignment=Enum.TextXAlignment.Left,Text="You",ZIndex=17},{}).Parent=profilePopup
+local placeNameStr=tostring(resolvedGameName)
+local profilePlaceName=colLine(leftCol,0,"Place name",placeNameStr,"PlaceName")
+local profilePlaceId=colLine(leftCol,36,"Place ID",tostring(game.PlaceId),"PlaceId")
+local profilePlayers=colLine(leftCol,72,"Players","…","Players")
+local profileMaxPlayers=colLine(leftCol,108,"Max players","…","MaxPlayers")
+local profileServerTime=colLine(leftCol,144,"Server uptime","…","ServerTime")
+local profileName=colLine(rightCol,0,"Username",LocalPlayer.Name..(verified and "  ✓" or "")..(isOwner and "  🛠️" or ""),"UserName")
+local profileDisplay=colLine(rightCol,36,"Display name",tostring(LocalPlayer.DisplayName or LocalPlayer.Name),"Display")
+local profileUid=colLine(rightCol,72,"User ID",tostring(LocalPlayer.UserId),"Uid")
+local ageText="—"
+pcall(function()ageText=tostring(LocalPlayer.AccountAge).." days"end)
+local profileAge=colLine(rightCol,108,"Account age",ageText,"Age")
+local profileStatus=colLine(rightCol,144,"Status",isOwner and "Owner" or(verified and "Verified ★" or "Standard"),"Status")
+local closeProfileBtn=new("TextButton",{AnchorPoint=Vector2.new(1,0),Position=UDim2.new(1,-6,0,6),Size=UDim2.new(0,22,0,22),BackgroundTransparency=1,Font=Enum.Font.GothamBold,TextSize=14,TextColor3=theme.SubText,Text="X",ZIndex=18},{})
+closeProfileBtn.Parent=profilePopup local notifHost=createNotificationHost(screenGui,theme)
 local nameplates=createNameplateSystem(theme)local self=setmetatable({ScreenGui=screenGui,Main=main,TabBar=tabBar,StarredRail=starredRail,Content=content,Theme=theme,ThemeName=themeName,Tabs={},ActiveTab=nil,Minimized=false,
 SkipFakeLoading=skipFakeLoading,MinimizeKeybind=Enum.KeyCode.RightControl,HideKeybind=Enum.KeyCode.LeftControl,Hidden=false,Destroyed=false,_connections={},BgAllowPulse=true,DragBounds=true,Resizable=false,_openPopups={},
 Name=name,BaseName=name,Description=description,UsingThemeIcon=(config.icon==nil),Verified=verified,IsOwner=isOwner,HideMarks=false,Starred={},OpenedAt=os.clock(),Width=WIDTH,Height=HEIGHT,TopBarH=TOPBAR_H,
@@ -644,8 +749,32 @@ profilePopup.Visible=not profilePopup.Visible if profilePopup.Visible then chang
 playSound(self,profilePopup.Visible and "AddUI" or "RemoveUI")end
 local profileHit=new("TextButton",{Name="ProfileHit",BackgroundTransparency=1,Position=UDim2.new(0,4,0,0),Size=UDim2.new(0,220,1,0),Text="",ZIndex=8,AutoButtonColor=false,},{})profileHit.Parent=footer profileHit.MouseButton1Click:Connect(toggleProfile)
 nameLabel.Active=false idLabel.Active=false avatar.Active=false closeProfileBtn.MouseButton1Click:Connect(function()profilePopup.Visible=false playSound(self,"RemoveUI")end)
-task.spawn(function()while main.Parent do if profilePopup.Visible then local secs=math.floor(os.clock()-self.OpenedAt)profileTime.Text=string.format("Session: %dm %ds",math.floor(secs/60),secs % 60)end
-task.wait(1)end
+task.spawn(function()
+local jobStart=os.clock()
+pcall(function()
+if workspace:GetServerTimeNow then jobStart=workspace:GetServerTimeNow()end
+end)
+while main.Parent do
+if profilePopup.Visible then
+local players=#Players:GetPlayers()
+local maxP=Players.MaxPlayers
+if profilePlayers then profilePlayers.Text=tostring(players)end
+if profileMaxPlayers then profileMaxPlayers.Text=tostring(maxP)end
+-- server uptime: prefer Workspace.DistributedGameTime (server age of this instance)
+local up=0
+pcall(function()up=workspace.DistributedGameTime end)
+if typeof(up)~="number" or up<=0 then up=os.clock()-(self.OpenedAt or os.clock())end
+local mins=math.floor(up/60)
+local secs=math.floor(up%60)
+local hrs=math.floor(mins/60)
+mins=mins%60
+if profileServerTime then
+if hrs>0 then profileServerTime.Text=string.format("%dh %dm %ds",hrs,mins,secs)
+else profileServerTime.Text=string.format("%dm %ds",mins,secs)end
+end
+end
+task.wait(1)
+end
 end)
 do
 local function viewport()local cam=workspace.CurrentCamera
@@ -1425,13 +1554,16 @@ end,
 callback=function()end,})tab:CreateButton({name="Save theme",buttonText="Save",starrable=false,callback=function()local raw=customNameBox and customNameBox:Get()or "" raw=tostring(raw):gsub("^%s+",""):gsub("%s+$","")
 if raw=="" then self:Notify({title="Name required",text="Enter a theme name first.",icon=DEFAULT_ICON})return end
 if raw:sub(1,7):lower()=="custom " then raw=raw:sub(8)end
-local key="Custom " .. raw local snap={}for k,v in pairs(self.Theme)do if typeof(v)=="Color3" then snap[k]=Color3.new(v.R,v.G,v.B)elseif type(v)=="boolean" then
+local key="Custom " .. raw local snap={}for k,v in pairs(self.Theme)do if typeof(v)=="Color3" then snap[k]=Color3.new(v.R,v.G,v.B)elseif type(v)=="boolean" or type(v)=="number" or type(v)=="string" then
 snap[k]=v end
 end
 if self.BgImage and self.BgImage.Visible and self.BgImage.Image~="" then snap.BackgroundImage=self.BgImage.Image snap.BackgroundTransparency=self.BgBaseTransparency or 0 end
 if self.CustomWindowIcon or(self.WindowIcon and not self.UsingThemeIcon)then snap.WindowIcon=self.CustomWindowIcon or self.WindowIcon.Image end
-snap.MatrixDensity=self.MatrixDensity or 100 snap.NoPulse=true Themes[key]=snap saveCustomThemes()print("[R8//TW0] Saved theme",key)self:Notify({title="Theme saved",text="Added \"" .. key .. "\" to the Theme list in Settings.",icon=DEFAULT_ICON,
-})if self._refreshThemeDropdown then self._refreshThemeDropdown()end
+snap.MatrixDensity=self.MatrixDensity or 100 snap.NoPulse=true Themes[key]=snap
+local ok=saveCustomThemes()
+print("[R8//TW0] Saved theme",key,"fs=",tostring(ok),"path=",SAVE_THEMES)
+self:Notify({title=ok and "Theme saved" or "Theme save failed",text=ok and ("Added "..key.." — wrote themes.json")or "Could not write themes.json (executor filesystem?)",icon=DEFAULT_ICON,})
+if self._refreshThemeDropdown then self._refreshThemeDropdown()end
 end,
 })
 return tab
@@ -1488,6 +1620,61 @@ searchBox:GetPropertyChangedSignal("Text"):Connect(function()rebuild(searchBox.T
 rebuild("")
 return tab
 end
+
+function Window:_BuildAccessPanel(tab)
+if not tab then return end
+local window=self
+tab:CreateDivider({text="access"})
+tab:CreateText({name="Owners & Verified",text="Saved to R8TW0/access.json on this executor. Only listed UserIds get Owner/Verified marks. Changes save only if you are Owner.",starrable=false,})
+local function requireOwner()
+if window.IsOwner then return true end
+playSound(window,"Denied")
+window:Notify({title="Owner only",text="You need Owner permissions to edit access lists.",icon=DEFAULT_ICON,duration=4})
+return false
+end
+local ownerBox=tab:CreateInput({name="Owner UserId",placeholder="123456789",numeric=true,starrable=false,callback=function()end,})
+tab:CreateButton({name="Add Owner",buttonText="Add",starrable=false,callback=function()
+if not requireOwner()then return end
+local id=tonumber(ownerBox and ownerBox:Get())
+if not id then window:Notify({title="Invalid",text="Enter a numeric UserId",icon=DEFAULT_ICON})return end
+if listAdd(AccessLists.owners,id)then saveAccess()window:Notify({title="Owner added",text="UserId "..tostring(id).." → access.json",icon=DEFAULT_ICON})
+else window:Notify({title="Already listed",text="UserId "..tostring(id),icon=DEFAULT_ICON})end
+end,})
+tab:CreateButton({name="Remove Owner",buttonText="Remove",starrable=false,callback=function()
+if not requireOwner()then return end
+local id=tonumber(ownerBox and ownerBox:Get())
+if not id then return end
+if listRemove(AccessLists.owners,id)then saveAccess()window:Notify({title="Owner removed",text="UserId "..tostring(id),icon=DEFAULT_ICON})
+else window:Notify({title="Not found",text="UserId "..tostring(id).." was not an owner",icon=DEFAULT_ICON})end
+end,})
+local verBox=tab:CreateInput({name="Verified UserId",placeholder="123456789",numeric=true,starrable=false,callback=function()end,})
+tab:CreateButton({name="Add Verified",buttonText="Add",starrable=false,callback=function()
+if not requireOwner()then return end
+local id=tonumber(verBox and verBox:Get())
+if not id then window:Notify({title="Invalid",text="Enter a numeric UserId",icon=DEFAULT_ICON})return end
+if listAdd(AccessLists.verified,id)then saveAccess()window:Notify({title="Verified added",text="UserId "..tostring(id).." → access.json",icon=DEFAULT_ICON})
+else window:Notify({title="Already listed",text="UserId "..tostring(id),icon=DEFAULT_ICON})end
+end,})
+tab:CreateButton({name="Remove Verified",buttonText="Remove",starrable=false,callback=function()
+if not requireOwner()then return end
+local id=tonumber(verBox and verBox:Get())
+if not id then return end
+if listRemove(AccessLists.verified,id)then saveAccess()window:Notify({title="Verified removed",text="UserId "..tostring(id),icon=DEFAULT_ICON})
+else window:Notify({title="Not found",text="UserId "..tostring(id).." was not verified",icon=DEFAULT_ICON})end
+end,})
+tab:CreateButton({name="Show access lists",buttonText="Print",starrable=false,callback=function()
+local o,v={},{}
+for _,id in ipairs(AccessLists.owners)do table.insert(o,tostring(id))end
+for _,id in ipairs(AccessLists.verified)do table.insert(v,tostring(id))end
+window:Notify({title="Access lists",text="Owners: "..(#o>0 and table.concat(o,", ")or "(none)").." | Verified: "..(#v>0 and table.concat(v,", ")or "(none)"),icon=DEFAULT_ICON,duration=6})
+end,})
+tab:CreateButton({name="Save access now",buttonText="Save",starrable=false,callback=function()
+if not requireOwner()then return end
+local ok=saveAccess()
+window:Notify({title=ok~=false and "Access saved" or "Save failed",text=ok~=false and "Wrote R8TW0/access.json" or "Could not write access.json",icon=DEFAULT_ICON})
+end,})
+end
+
 function Window:CreateOwnerTab(config)config=config or{}if self.OwnerTab then
 return self.OwnerTab
 end
@@ -1496,6 +1683,8 @@ return nil
 end
 local ownerIcon=config.icon or("rbxthumb://type=AvatarHeadShot&id=" .. Players.LocalPlayer.UserId .. "&w=48&h=48")local ownerTab=self:CreateTab({name=config.name or "Owner",icon=ownerIcon,})self.OwnerTab=ownerTab self.ExcludedFromSearch=self.ExcludedFromSearch or{}
 self.ExcludedFromSearch.Owner=true
+ownerTab:CreateText({name="Owner panel",text="Owner-only tools. Access lists below save to R8TW0/access.json when you change them.",starrable=false,})
+self:_BuildAccessPanel(ownerTab)
 return ownerTab
 end
 function Window:CreateSettingsTab(config)config=config or{}local settingsTab=self:CreateTab({name=config.name or "Settings",icon=config.icon or SETTINGS_ICON,})self.SettingsTab=settingsTab if self.Description~="" then settingsTab:CreateText({
@@ -1529,7 +1718,9 @@ self.Resizable=v and true or false end pcall(function()self:SaveSettings()end)
 end,
 })settingsTab:CreateToggle({name="Keybind buttons",value=self.ButtonKeybindsEnabled==true,starrable=false,callback=function(v)self:SetButtonKeybindsEnabled(v)pcall(function()self:SaveSettings()end)self:Notify({title="Keybind buttons",text=v and "Keybind slots shown on Buttons & Toggles (not Settings/Customize)."
 or "Keybind slots hidden. Non-forced keybinds cleared.",icon=DEFAULT_ICON,duration=3,})end,
-})settingsTab:CreateDivider({text="dev"})settingsTab:CreateToggle({name="DEVELOPER mode",value=false,starrable=false,callback=function(v)self.DeveloperMode=v if v then local tab=self:_BuildCustomizationTab()if tab and tab.Select then
+})
+self:_BuildAccessPanel(settingsTab)
+settingsTab:CreateDivider({text="dev"})settingsTab:CreateToggle({name="DEVELOPER mode",value=false,starrable=false,callback=function(v)self.DeveloperMode=v if v then local tab=self:_BuildCustomizationTab()if tab and tab.Select then
 tab.Select()end
 elseif self.CustomizationTab then
 self.CustomizationTab.Button.Visible=false self.CustomizationTab.Page.Visible=false if self.ActiveTab==self.CustomizationTab and self.Tabs[1]then self.Tabs[1].Select()end
