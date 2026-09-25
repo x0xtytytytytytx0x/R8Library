@@ -67,6 +67,7 @@ end
 local function themeFilePath(themeName)
 	return SAVE_THEMES_DIR.."/"..safeFileName(themeName)..".json"
 end
+local Themes -- forward declare (filled in below)
 local THEME_INDEX_PATH=SAVE_THEMES_DIR.."/_index.json"
 local function readThemeIndex()
 	local data=readJson(THEME_INDEX_PATH)
@@ -215,7 +216,8 @@ local function saveOneTheme(name,snap)
 		for _,n in ipairs(names) do if n==name then found=true break end end
 		if not found then table.insert(names,name) end
 		writeThemeIndex(names)
-		Themes[name]=snap
+		if Themes then Themes[name]=snap end
+		if UILibrary and UILibrary.Themes then UILibrary.Themes[name]=snap end
 	end
 	return ok
 end
@@ -300,7 +302,7 @@ local function brandTitle(themeName,baseName)if themeName=="RateOne" then local 
 	return baseName
 end
 
-local Themes = {
+Themes = {
 	R8TW0 = {
 		Background = hex("F4F6FF"),
 		Sidebar = hex("E4E9FF"),
