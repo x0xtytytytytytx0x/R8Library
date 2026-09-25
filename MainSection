@@ -206,20 +206,28 @@ local function loadCustomThemes()
 end
 local function saveOneTheme(name,snap)
 	if type(name)~="string" or type(snap)~="table" then return false end
-	ensureDir(SAVE_THEMES_DIR)
-	local payload=themeSnapToJson(snap)
+	pcall(ensureDir, SAVE_THEMES_DIR)
+	local payload=themeSnapToJson(snap) or {}
 	payload._name=name
 	local ok=writeJson(themeFilePath(name), payload)
 	if ok then
-		local names=readThemeIndex()
-		local found=false
-		for _,n in ipairs(names) do if n==name then found=true break end end
-		if not found then table.insert(names,name) end
-		writeThemeIndex(names)
-		if Themes then Themes[name]=snap end
-		if UILibrary and UILibrary.Themes then UILibrary.Themes[name]=snap end
+		pcall(function()
+			local names=readThemeIndex() or {}
+			local found=false
+			for _,n in ipairs(names) do if n==name then found=true break end end
+			if not found then table.insert(names,name) end
+			writeThemeIndex(names)
+		end)
+		-- always register in the live theme maps (never assume a local upvalue)
+		pcall(function()
+			local map = (UILibrary and UILibrary.Themes) or Themes
+			if type(map)=="table" then map[name]=snap end
+		end)
+		pcall(function()
+			if type(Themes)=="table" then Themes[name]=snap end
+		end)
 	end
-	return ok
+	return ok==true
 end
 local function saveCustomThemes()
 	if not Themes then return false end
@@ -1105,19 +1113,19 @@ function Window:ToggleMinimize()if self.Destroyed then return end
 	local cx=ap.X+as.X*0.5 local cy=ap.Y+as.Y*0.5 if self.Minimized then matrixBurst(self.ScreenGui or main.Parent,self.Theme,Players.LocalPlayer,{x=cx,y=cy,count=22,duration=0.4,radius=70,textSize=11,})tween(main,{BackgroundTransparency=0.25},0.08)
 		tween(main,{Size=UDim2.new(0,260,0,self.TopBarH)},0.3,Enum.EasingStyle.Back,Enum.EasingDirection.In)task.delay(0.12,function()if main.Parent then tween(main,{BackgroundTransparency=0},0.16)end
 		end)
-		self.TabBar.Visible=false main.Body.Visible=false main.Footer.Visible=false main.ProfilePopup.Visible=false if self.MatrixBorder then self.MatrixBorder.SetVisible(false)self.MatrixBorder.SetSize(260,self.TopBarH)end
+		if self.TabBar then self.TabBar.Visible=false end local _b=main:FindFirstChild("Body") if _b then _b.Visible=false end local _f=main:FindFirstChild("Footer") if _f then _f.Visible=false end local _pp=main:FindFirstChild("ProfilePopup") if _pp then _pp.Visible=false end if self.MatrixBorder then self.MatrixBorder.SetVisible(false)self.MatrixBorder.SetSize(260,self.TopBarH)end
 	else
 		main.Size=UDim2.new(0,260,0,self.TopBarH)matrixBurst(self.ScreenGui or main.Parent,self.Theme,Players.LocalPlayer,{x=cx,y=cy,count=18,duration=0.35,radius=55,textSize=10,})tween(main,{Size=UDim2.new(0,self.Width,0,self.Height)},0.34,Enum.EasingStyle.Back,Enum.EasingDirection.Out)
 		if accentBar then local savedColor=accentBar.BackgroundColor3 accentBar.BackgroundColor3=Color3.new(1,1,1)tween(accentBar,{BackgroundColor3=savedColor},0.3)end
 		if self.MatrixBorder then self.MatrixBorder.SetSize(self.Width,self.Height)end
-		task.delay(0.08,function()self.TabBar.Visible=true main.Body.Visible=true main.Footer.Visible=true if self.MatrixEnabled and self.MatrixBorder and not(self.Theme and self.Theme.NoMatrix)then self.MatrixBorder.SetVisible(true)end
+		task.delay(0.08,function()if self.TabBar then self.TabBar.Visible=true end local _b=main:FindFirstChild("Body") if _b then _b.Visible=true end local _f=main:FindFirstChild("Footer") if _f then _f.Visible=true end if self.MatrixEnabled and self.MatrixBorder and not(self.Theme and self.Theme.NoMatrix)then self.MatrixBorder.SetVisible(true)end
 		end)
 	end
 end
 function Window:SetMinimizeKeybind(keyCode)self.MinimizeKeybind=keyCode end
 function Window:SetHideKeybind(keyCode)self.HideKeybind=keyCode end
 function Window:ToggleHide()if self.Destroyed then return end
-	self.Hidden=not self.Hidden local main=self.Main playSound(self,self.Hidden and "RemoveUI" or "AddUI")if self.Hidden then if not self.Minimized then self.TabBar.Visible=false main.Body.Visible=false main.Footer.Visible=false main.ProfilePopup.Visible=false
+	self.Hidden=not self.Hidden local main=self.Main playSound(self,self.Hidden and "RemoveUI" or "AddUI")if self.Hidden then if not self.Minimized then if self.TabBar then self.TabBar.Visible=false end local _b=main:FindFirstChild("Body") if _b then _b.Visible=false end local _f=main:FindFirstChild("Footer") if _f then _f.Visible=false end local _pp=main:FindFirstChild("ProfilePopup") if _pp then _pp.Visible=false end
 			if self._themeRefs and self._themeRefs.changelogPopup then self._themeRefs.changelogPopup.Visible=false end
 			if self.MatrixBorder then self.MatrixBorder.SetVisible(false)end
 			tween(main,{Size=UDim2.new(0,260,0,self.TopBarH)},0.28,Enum.EasingStyle.Back,Enum.EasingDirection.In)task.delay(0.3,function()if self.Destroyed then return end
@@ -1126,7 +1134,7 @@ function Window:ToggleHide()if self.Destroyed then return end
 			main.Visible=false if self.MatrixBorder then self.MatrixBorder.SetVisible(false)end
 		end
 		self.Minimized=false else
-		main.Size=UDim2.new(0,self.Width,0,self.Height)main.BackgroundTransparency=0 main.Visible=true self.TabBar.Visible=true main.Body.Visible=true main.Footer.Visible=true if self.MatrixEnabled and self.MatrixBorder and not(self.Theme and self.Theme.NoMatrix)then
+		main.Size=UDim2.new(0,self.Width,0,self.Height)main.BackgroundTransparency=0 main.Visible=true if self.TabBar then self.TabBar.Visible=true end local _b=main:FindFirstChild("Body") if _b then _b.Visible=true end local _f=main:FindFirstChild("Footer") if _f then _f.Visible=true end if self.MatrixEnabled and self.MatrixBorder and not(self.Theme and self.Theme.NoMatrix)then
 			self.MatrixBorder.SetVisible(true)self.MatrixBorder.SetSize(self.Width,self.Height)end
 	end
 end
