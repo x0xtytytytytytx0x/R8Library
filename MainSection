@@ -67,17 +67,58 @@ end
 local function themeFilePath(themeName)
 	return SAVE_THEMES_DIR.."/"..safeFileName(themeName)..".json"
 end
+local THEME_INDEX_PATH=SAVE_THEMES_DIR.."/_index.json"
+local function readThemeIndex()
+	local data=readJson(THEME_INDEX_PATH)
+	local names={}
+	if type(data)=="table" then
+		if data.names then
+			for _,n in ipairs(data.names) do if type(n)=="string" then table.insert(names,n) end end
+		else
+			for _,n in ipairs(data) do if type(n)=="string" then table.insert(names,n) end end
+		end
+	end
+	return names
+end
+local function writeThemeIndex(names)
+	local uniq,out={},{}
+	for _,n in ipairs(names or {}) do
+		if type(n)=="string" and n~="" and not uniq[n] then
+			uniq[n]=true
+			table.insert(out,n)
+		end
+	end
+	table.sort(out)
+	return writeJson(THEME_INDEX_PATH,{names=out})
+end
 local function listThemeFiles()
 	local files={}
-	if not fsOk() then return files end
-	pcall(function()
-		if typeof(listfiles)=="function" then
-			for _,p in ipairs(listfiles(SAVE_THEMES_DIR) or {}) do
-				local n=tostring(p):match("([^/\\]+)%.json$")
-				if n then table.insert(files,n) end
+	local seen={}
+	local function add(n)
+		if type(n)~="string" or n=="" or n=="_index" then return end
+		if seen[n] then return end
+		seen[n]=true
+		table.insert(files,n)
+	end
+	-- 1) index (reliable on executors without listfiles)
+	for _,n in ipairs(readThemeIndex()) do add(n) end
+	-- 2) listfiles if available
+	if fsOk() then
+		pcall(function()
+			if typeof(listfiles)=="function" then
+				for _,p in ipairs(listfiles(SAVE_THEMES_DIR) or {}) do
+					local n=tostring(p):match("([^/\\]+)%.json$")
+					if n and n~="_index" then add(n) end
+				end
 			end
+		end)
+	end
+	-- 3) Themes table already in memory
+	if Themes then
+		for k in pairs(Themes) do
+			if type(k)=="string" and k:sub(1,7)=="Custom " then add(k) end
 		end
-	end)
+	end
 	return files
 end
 local function deleteThemeFile(themeName)
@@ -86,6 +127,11 @@ local function deleteThemeFile(themeName)
 	local ok=pcall(function()
 		if typeof(delfile)=="function" then delfile(path) end
 	end)
+	-- drop from index
+	local names=readThemeIndex()
+	local next={}
+	for _,n in ipairs(names) do if n~=themeName then table.insert(next,n) end end
+	writeThemeIndex(next)
 	return ok==true
 end
 local function colorToT(c)if typeof(c)~="Color3" then return nil end return{r=c.R,g=c.G,b=c.B}end
@@ -107,45 +153,84 @@ local function themeJsonToSnap(data)
 	local t={}
 	if type(data)~="table" then return t end
 	for k,v in pairs(data)do
-		if type(v)=="table" and v.r~=nil then t[k]=tToColor(v) else t[k]=v end
+		if k=="_name" then
+			-- keep for key resolution, not as theme color field
+		elseif type(v)=="table" and v.r~=nil then t[k]=tToColor(v)
+		elseif type(v)=="boolean" or type(v)=="number" or type(v)=="string" then t[k]=v
+		end
 	end
 	return t
 end
 local function loadCustomThemes()
 	if not Themes then return end
+	ensureDir(SAVE_ROOT)
+	ensureDir(SAVE_THEMES_DIR)
+	-- legacy single-file migrate
 	local legacy=readJson(SAVE_ROOT.."/themes.json")
 	if type(legacy)=="table" then
+		local migrated={}
 		for name,snap in pairs(legacy)do
 			if type(name)=="string" and type(snap)=="table" then
 				Themes[name]=themeJsonToSnap(snap)
-				writeJson(themeFilePath(name), themeSnapToJson(Themes[name]))
+				local payload=themeSnapToJson(Themes[name])
+				payload._name=name
+				writeJson(themeFilePath(name), payload)
+				table.insert(migrated,name)
 			end
 		end
+		if #migrated>0 then writeThemeIndex(migrated) end
 	end
-	for _,fname in ipairs(listThemeFiles()) do
-		local data=readJson(themeFilePath(fname))
-		if type(data)=="table" then
-			local key = (type(data._name)=="string" and data._name~="") and data._name or fname
-			if key:sub(1,7)~="Custom " then key="Custom "..key end
-			Themes[key]=themeJsonToSnap(data)
+	local loaded={}
+	local function tryLoad(label)
+		if type(label)~="string" or label=="" or label=="_index" then return end
+		local data=readJson(themeFilePath(label))
+		if type(data)~="table" then
+			-- try raw filename without rewriting
+			data=readJson(SAVE_THEMES_DIR.."/"..label..".json")
 		end
+		if type(data)~="table" then return end
+		local key=(type(data._name)=="string" and data._name~="") and data._name or label
+		if key:sub(1,7)~="Custom " then key="Custom "..key end
+		Themes[key]=themeJsonToSnap(data)
+		table.insert(loaded,key)
+		print("[R8//TW0] loaded theme",key)
 	end
+	for _,fname in ipairs(listThemeFiles()) do tryLoad(fname) end
+	-- rebuild index from what we actually loaded + existing customs
+	local names={}
+	for k in pairs(Themes) do
+		if type(k)=="string" and k:sub(1,7)=="Custom " then table.insert(names,k) end
+	end
+	if #names>0 then writeThemeIndex(names) end
 end
 local function saveOneTheme(name,snap)
 	if type(name)~="string" or type(snap)~="table" then return false end
+	ensureDir(SAVE_THEMES_DIR)
 	local payload=themeSnapToJson(snap)
 	payload._name=name
-	return writeJson(themeFilePath(name), payload)
+	local ok=writeJson(themeFilePath(name), payload)
+	if ok then
+		local names=readThemeIndex()
+		local found=false
+		for _,n in ipairs(names) do if n==name then found=true break end end
+		if not found then table.insert(names,name) end
+		writeThemeIndex(names)
+		Themes[name]=snap
+	end
+	return ok
 end
 local function saveCustomThemes()
 	if not Themes then return false end
 	local allOk,any=true,false
+	local names={}
 	for k,v in pairs(Themes)do
 		if type(k)=="string" and k:sub(1,7)=="Custom " and type(v)=="table" then
 			any=true
+			table.insert(names,k)
 			if not saveOneTheme(k,v) then allOk=false end
 		end
 	end
+	writeThemeIndex(names)
 	return any and allOk
 end
 local function deleteCustomTheme(name)
@@ -154,6 +239,7 @@ local function deleteCustomTheme(name)
 	deleteThemeFile(name)
 	return true
 end
+
 local OWNER_LIST_URL="https://raw.githubusercontent.com/x0xtytytytytytx0x/R8Library/refs/heads/main/OwnerList"
 local VERIFIED_LIST_URL="https://raw.githubusercontent.com/x0xtytytytytx0x/R8Library/refs/heads/main/VerifiedList"
 local AccessLists={owners={},verified={}}
@@ -1699,8 +1785,13 @@ function Window:_BuildCustomizationTab()if self.CustomizationTab then self.Custo
 		if self.CustomWindowIcon or(self.WindowIcon and not self.UsingThemeIcon)then snap.WindowIcon=self.CustomWindowIcon or self.WindowIcon.Image end
 		snap.MatrixDensity=self.MatrixDensity or 100 snap.NoPulse=true Themes[key]=snap local ok=saveOneTheme(key,snap)
 		print("[R8//TW0] Saved theme",key,"fs=",tostring(ok),"path=",themeFilePath(key))
-		self:Notify({title=ok and "Theme saved" or "Theme save failed",text=ok and ("Added "..key.." — wrote themes.json") or "Could not write themes.json (check executor filesystem)",icon=DEFAULT_ICON,})
-		if self._refreshThemeDropdown then self._refreshThemeDropdown()end
+		self:Notify({title=ok and "Theme saved" or "Theme save failed",text=ok and ("Saved "..key.." → Themes/"..safeFileName(key)..".json") or "Could not write theme file (check executor filesystem)",icon=DEFAULT_ICON,duration=4,})
+		if ok then
+			Themes[key]=snap
+			self:SetTheme(key)
+			if self._refreshThemeDropdown then self._refreshThemeDropdown() end
+			if self._refreshCustomThemeList then self._refreshCustomThemeList() end
+		end
 	end,
 	})
 	return tab
@@ -1939,7 +2030,8 @@ function Window:ApplyNamehide()
 	self._namehideName = pick
 end
 
-function Window:CreateSettingsTab(config)config=config or{}local settingsTab=self:CreateTab({name=config.name or "Settings",icon=config.icon or SETTINGS_ICON,})self.SettingsTab=settingsTab if self.Description~="" then settingsTab:CreateText({
+function Window:CreateSettingsTab(config)config=config or{} pcall(loadCustomThemes)
+local settingsTab=self:CreateTab({name=config.name or "Settings",icon=config.icon or SETTINGS_ICON,})self.SettingsTab=settingsTab if self.Description~="" then settingsTab:CreateText({
 		name="About",text=self.Description,starrable=false,})settingsTab:CreateDivider({line=false,spacing=6})end
 	local function themeOptionList()local opts={"R8TW0","RateOne","Concrete","Midnight","BloodBath","Ocean"}for k in pairs(Themes)do if type(k)=="string" and k:sub(1,7)=="Custom " then table.insert(opts,k)end
 		end
@@ -2014,6 +2106,11 @@ function Window:CreateSettingsTab(config)config=config or{}local settingsTab=sel
 		starrable=false,
 		callback=function() end,
 	})
+	self._refreshCustomThemeList=function()
+		local opts=customThemeNames()
+		if delDrop and delDrop.SetOptions then delDrop:SetOptions(opts) end
+		if self._refreshThemeDropdown then self._refreshThemeDropdown() end
+	end
 	settingsTab:CreateButton({
 		name="Delete selected custom theme",
 		buttonText="Delete",
@@ -2029,8 +2126,7 @@ function Window:CreateSettingsTab(config)config=config or{}local settingsTab=sel
 			end
 			deleteCustomTheme(name)
 			if self.ThemeName==name then self:SetTheme("R8TW0") end
-			if self._refreshThemeDropdown then self._refreshThemeDropdown() end
-			if delDrop and delDrop.SetOptions then delDrop:SetOptions(customThemeNames()) end
+			if self._refreshCustomThemeList then self._refreshCustomThemeList() end
 			self:Notify({title="Deleted",text=name.." removed.",icon=DEFAULT_ICON,duration=3})
 		end,
 	})
