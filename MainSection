@@ -677,7 +677,11 @@ local function addStar(tabSelf,row,key,displayName,actionFn)local window=tabSelf
 	return starBtn
 end
 local Window={}Window.__index=Window
-function UILibrary:CreateWindow(config)config=config or{}local name=config.name or "Window" local themeName=config.theme or "R8TW0" local skipFakeLoading=config.skipFakeLoading or false
+function UILibrary:CreateWindow(config)config=config or{}
+	-- Baked identity (not overridable from consumer scripts)
+	local name="R8//TW0"
+	local themeName="R8TW0"
+	local skipFakeLoading=config.skipFakeLoading or false
 	do local early=readJson(SAVE_SETTINGS) if type(early)=="table" and early.skipFakeLoading==true then skipFakeLoading=true end end local loadingDuration=config.loadingDuration or 10
 	local iconId=getIcon(config.icon or themeDefaultIcon(themeName))local description=config.description or "" local function fetchPlaceName() local n="Place "..tostring(game.PlaceId) pcall(function() local info=game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId) if info and info.Name then n=info.Name end end) return n end
 	local gameNameGetter=config.gameName or config.subtitle or fetchPlaceName local matrixEnabled=config.matrix~=false local bgAsset=config.backgroundImage
@@ -1617,6 +1621,7 @@ function Tab:CreateColorPicker(config)config=config or{}local window=self.Window
 	end
 	swatch.MouseButton1Click:Connect(function()setPanelOpen(not panelOpen)end)
 	registerSearchEntry(window,self,{name=config.name or "Color",tabName=self.Name,kind="Color",})
+	_cpPush=function(c) pushFromColor(c,true) end
 	return{
 		Get=function()
 			return color,alpha
@@ -1625,8 +1630,7 @@ function Tab:CreateColorPicker(config)config=config or{}local window=self.Window
 			if a then alpha=a end
 		end,
 	}
-	_cpPush=function(c) pushFromColor(c,true) end
-	end
+end
 function Tab:CreateStat(config)config=config or{}local theme=self.Window.Theme local value=config.value or 0 local prefix=config.prefix or "" local suffix=config.suffix or "" local row,title=baseRow(theme)row.LayoutOrder=nextOrder(self.Page)
 	title.Text=config.name or "Stat" title.Position=UDim2.new(0,14,0,0)title.Size=UDim2.new(0.5,0,1,0)row.Parent=self.Page local valueLabel=new("TextLabel",{BackgroundTransparency=1,AnchorPoint=Vector2.new(1,0.5),Position=UDim2.new(1,-14,0.5,0),
 		Size=UDim2.new(0.4,0,1,0),Font=Enum.Font.GothamBold,TextSize=15,TextColor3=theme.AccentBlue,TextXAlignment=Enum.TextXAlignment.Right,Text=prefix .. tostring(value).. suffix,},{})valueLabel.Parent=row if self.Window._trackTheme then
