@@ -51,8 +51,8 @@ local SAVE_ROOT="R8TW0"
 local SAVE_SETTINGS=SAVE_ROOT.."/settings.json"
 local SAVE_THEMES_DIR=SAVE_ROOT.."/Themes"
 local SAVE_PLACES=SAVE_ROOT.."/places"
-local PREMADE_THEMES_URL="https://raw.githubusercontent.com/x0xtytytytytytx0x/R8Library/refs/heads/main/PremadeThemes"
-local UPDATELOG_URL="https://raw.githubusercontent.com/x0xtytytytytytx0x/R8Library/refs/heads/main/Updatelog"
+local PREMADE_THEMES_URL="https://raw.githubusercontent.com/x0xtytytytytytx0x/spork/refs/heads/main/PremadeThemes"
+local UPDATELOG_URL="https://raw.githubusercontent.com/x0xtytytytytytx0x/spork/refs/heads/main/Updatelog"
 local function fsOk()return typeof(writefile)=="function" and typeof(readfile)=="function" end
 local function ensureDir(p)if not fsOk()then return end pcall(function()if typeof(makefolder)=="function" then if typeof(isfolder)~="function" or not isfolder(p) then makefolder(p) end end end)end
 local function jsonEnc(t)local ok,r=pcall(function()return game:GetService("HttpService"):JSONEncode(t)end)return ok and r or nil end
@@ -250,8 +250,8 @@ local function deleteCustomTheme(name)
 	return true
 end
 
-local OWNER_LIST_URL="https://raw.githubusercontent.com/x0xtytytytytytx0x/R8Library/refs/heads/main/OwnerList"
-local VERIFIED_LIST_URL="https://raw.githubusercontent.com/x0xtytytytytx0x/R8Library/refs/heads/main/VerifiedList"
+local OWNER_LIST_URL="https://raw.githubusercontent.com/x0xtytytytytytx0x/spork/refs/heads/main/OwnerList"
+local VERIFIED_LIST_URL="https://raw.githubusercontent.com/x0xtytytytytx0x/spork/refs/heads/main/VerifiedList"
 local AccessLists={owners={},verified={}}
 local function httpGet(url)
 	local ok,body=pcall(function()
@@ -1969,7 +1969,7 @@ function Window:CreateOwnerTab(config)
 		buttonText = "Run",
 		starrable = false,
 		callback = function()
-			self:_RunOwnerTool("RSPY", "https://raw.githubusercontent.com/x0xtytytytytytx0x/R8Library/refs/heads/main/RSPY")
+			self:_RunOwnerTool("RSPY", "https://raw.githubusercontent.com/x0xtytytytytytx0x/spork/refs/heads/main/RSPY")
 		end,
 	})
 
