@@ -45,18 +45,49 @@ local SETTINGS_ICON="rbxassetid://7059346373"
 local CUSTOMIZE_ICON="rbxassetid://12334709462" local OWNER_USER_ID=1115062717
 local ATTR_NAME="R8//TW0"
 local MATRIX_PAD=14
-local UI_VERSION="6.7"
+local UI_VERSION="6.8"
 
 local SAVE_ROOT="R8TW0"
 local SAVE_SETTINGS=SAVE_ROOT.."/settings.json"
-local SAVE_THEMES=SAVE_ROOT.."/themes.json"
+local SAVE_THEMES_DIR=SAVE_ROOT.."/Themes"
 local SAVE_PLACES=SAVE_ROOT.."/places"
+local PREMADE_THEMES_URL="https://raw.githubusercontent.com/x0xtytytytytytx0x/R8Library/refs/heads/main/PremadeThemes"
+local UPDATELOG_URL="https://raw.githubusercontent.com/x0xtytytytytytx0x/R8Library/refs/heads/main/Updatelog"
 local function fsOk()return typeof(writefile)=="function" and typeof(readfile)=="function" end
 local function ensureDir(p)if not fsOk()then return end pcall(function()if typeof(makefolder)=="function" then if typeof(isfolder)~="function" or not isfolder(p) then makefolder(p) end end end)end
 local function jsonEnc(t)local ok,r=pcall(function()return game:GetService("HttpService"):JSONEncode(t)end)return ok and r or nil end
 local function jsonDec(s)if type(s)~="string" or s=="" then return nil end local ok,r=pcall(function()return game:GetService("HttpService"):JSONDecode(s)end)return ok and r or nil end
 local function readJson(path)if not fsOk()then return nil end local ok,data=pcall(function()if typeof(isfile)=="function" and not isfile(path)then return nil end return readfile(path)end)if not ok or not data then return nil end return jsonDec(data)end
-local function writeJson(path,tbl)if not fsOk()then return false end ensureDir(SAVE_ROOT)ensureDir(SAVE_PLACES)local s=jsonEnc(tbl)if not s then print("[R8//TW0] JSONEncode failed",path) return false end local ok,err=pcall(function()writefile(path,s)end) if not ok then print("[R8//TW0] writefile failed",path,tostring(err)) end return ok==true end
+local function writeJson(path,tbl)if not fsOk()then print("[R8//TW0] no filesystem (writefile/readfile missing)") return false end ensureDir(SAVE_ROOT)ensureDir(SAVE_THEMES_DIR)ensureDir(SAVE_PLACES)local s=jsonEnc(tbl)if not s then print("[R8//TW0] JSONEncode failed",path) return false end local ok,err=pcall(function()writefile(path,s)end) if not ok then print("[R8//TW0] writefile failed",path,tostring(err)) else print("[R8//TW0] wrote",path) end return ok==true end
+local function safeFileName(name)
+	name=tostring(name or "theme"):gsub('[<>:"/\\|%?%*]', "_"):gsub("^%s+",""):gsub("%s+$","")
+	if name=="" then name="theme" end
+	return name
+end
+local function themeFilePath(themeName)
+	return SAVE_THEMES_DIR.."/"..safeFileName(themeName)..".json"
+end
+local function listThemeFiles()
+	local files={}
+	if not fsOk() then return files end
+	pcall(function()
+		if typeof(listfiles)=="function" then
+			for _,p in ipairs(listfiles(SAVE_THEMES_DIR) or {}) do
+				local n=tostring(p):match("([^/\\]+)%.json$")
+				if n then table.insert(files,n) end
+			end
+		end
+	end)
+	return files
+end
+local function deleteThemeFile(themeName)
+	if not fsOk() then return false end
+	local path=themeFilePath(themeName)
+	local ok=pcall(function()
+		if typeof(delfile)=="function" then delfile(path) end
+	end)
+	return ok==true
+end
 local function colorToT(c)if typeof(c)~="Color3" then return nil end return{r=c.R,g=c.G,b=c.B}end
 local function tToColor(t)if type(t)~="table" then return nil end return Color3.new(tonumber(t.r)or 1,tonumber(t.g)or 1,tonumber(t.b)or 1)end
 local function keyName(k)if typeof(k)=="EnumItem" then return k.Name end if type(k)=="string" then return k end return nil end
@@ -82,19 +113,46 @@ local function themeJsonToSnap(data)
 end
 local function loadCustomThemes()
 	if not Themes then return end
-	local data=readJson(SAVE_THEMES)
-	if type(data)~="table" then return end
-	for name,snap in pairs(data)do
-		if type(name)=="string" and type(snap)=="table" then Themes[name]=themeJsonToSnap(snap) end
+	local legacy=readJson(SAVE_ROOT.."/themes.json")
+	if type(legacy)=="table" then
+		for name,snap in pairs(legacy)do
+			if type(name)=="string" and type(snap)=="table" then
+				Themes[name]=themeJsonToSnap(snap)
+				writeJson(themeFilePath(name), themeSnapToJson(Themes[name]))
+			end
+		end
 	end
+	for _,fname in ipairs(listThemeFiles()) do
+		local data=readJson(themeFilePath(fname))
+		if type(data)=="table" then
+			local key = (type(data._name)=="string" and data._name~="") and data._name or fname
+			if key:sub(1,7)~="Custom " then key="Custom "..key end
+			Themes[key]=themeJsonToSnap(data)
+		end
+	end
+end
+local function saveOneTheme(name,snap)
+	if type(name)~="string" or type(snap)~="table" then return false end
+	local payload=themeSnapToJson(snap)
+	payload._name=name
+	return writeJson(themeFilePath(name), payload)
 end
 local function saveCustomThemes()
 	if not Themes then return false end
-	local out={}
+	local allOk,any=true,false
 	for k,v in pairs(Themes)do
-		if type(k)=="string" and k:sub(1,7)=="Custom " and type(v)=="table" then out[k]=themeSnapToJson(v) end
+		if type(k)=="string" and k:sub(1,7)=="Custom " and type(v)=="table" then
+			any=true
+			if not saveOneTheme(k,v) then allOk=false end
+		end
 	end
-	return writeJson(SAVE_THEMES,out)
+	return any and allOk
+end
+local function deleteCustomTheme(name)
+	if type(name)~="string" or name:sub(1,7)~="Custom " then return false end
+	Themes[name]=nil
+	deleteThemeFile(name)
+	return true
 end
 local OWNER_LIST_URL="https://raw.githubusercontent.com/x0xtytytytytytx0x/R8Library/refs/heads/main/OwnerList"
 local VERIFIED_LIST_URL="https://raw.githubusercontent.com/x0xtytytytytx0x/R8Library/refs/heads/main/VerifiedList"
@@ -240,10 +298,36 @@ local Themes = {
 }
 
 UILibrary.Themes=Themes UILibrary.OwnerUserId=OWNER_USER_ID UILibrary.Version=UI_VERSION
+local CHANGELOG={}
+local function loadPremadeThemesRemote()
+	local body=httpGet(PREMADE_THEMES_URL)
+	if not body or body=="" then return end
+	local data=jsonDec(body)
+	if type(data)~="table" then return end
+	local map=data.themes or data
+	if type(map)~="table" then return end
+	for name,snap in pairs(map)do
+		if type(name)=="string" and type(snap)=="table" and name:sub(1,7)~="Custom " then
+			Themes[name]=themeJsonToSnap(snap)
+		end
+	end
+end
+local function loadUpdateLogRemote()
+	local body=httpGet(UPDATELOG_URL)
+	if not body or body=="" then return end
+	local data=jsonDec(body)
+	if type(data)~="table" then return end
+	local ver=data.version or data.currentVersion
+	if type(ver)=="string" and ver~="" then UI_VERSION=ver UILibrary.Version=ver end
+	local entries=data.changelog or data.log or data.entries
+	if type(entries)=="table" and entries[1] then CHANGELOG=entries end
+end
+loadPremadeThemesRemote()
 loadCustomThemes()
 loadAccess()
 
-local CHANGELOG = {
+
+CHANGELOG = {
 	{
 		version = "6.7",
 		notes = {
@@ -366,6 +450,9 @@ local CHANGELOG = {
 		},
 	},
 }
+
+pcall(loadUpdateLogRemote)
+UILibrary.Version=UI_VERSION
 
 local function new(class,props,children)local inst=Instance.new(class)for k,v in pairs(props or{})do inst[k]=v end
 	for _,child in ipairs(children or{})do child.Parent=inst end
@@ -607,7 +694,7 @@ function UILibrary:CreateWindow(config)config=config or{}local name=config.name 
 	if not verified and config.verifiedUserIds then for _,id in ipairs(config.verifiedUserIds)do if tonumber(id)==LocalPlayer.UserId then verified=true end end end
 	if not verified and listHas(AccessLists.verified,LocalPlayer.UserId) then verified=true end
 	if not verified and config.verified==true then verified=true end
-	local screenGui=new("ScreenGui",{Name="UILibrary_" .. name,ResetOnSpawn=false,ZIndexBehavior=Enum.ZIndexBehavior.Sibling,IgnoreGuiInset=false,})screenGui.Parent=PlayerGui local theme=Themes[themeName]or Themes.R8TW0 local loadingOverlay,totalLoadDuration,loadingSound=buildLoadingScreen(
+	local screenGui=new("ScreenGui",{Name="UILibrary_" .. name,ResetOnSpawn=false,ZIndexBehavior=Enum.ZIndexBehavior.Sibling,IgnoreGuiInset=false,})screenGui.Parent=PlayerGui self.ScreenGui=screenGui local theme=Themes[themeName]or Themes.R8TW0 local loadingOverlay,totalLoadDuration,loadingSound=buildLoadingScreen(
 	screenGui,theme,brandTitle(themeName,name),themeDefaultIcon(themeName),loadingDuration,
 	function()
 		return skipFakeLoading
@@ -716,7 +803,7 @@ function UILibrary:CreateWindow(config)config=config or{}local name=config.name 
 		SkipFakeLoading=skipFakeLoading,MinimizeKeybind=Enum.KeyCode.RightControl,HideKeybind=Enum.KeyCode.LeftControl,Hidden=false,Destroyed=false,_connections={},BgAllowPulse=true,DragBounds=true,Resizable=false,_openPopups={},
 		Name=name,BaseName=name,Description=description,UsingThemeIcon=(config.icon==nil),Verified=verified,IsOwner=isOwner,HideMarks=false,Starred={},OpenedAt=os.clock(),Width=WIDTH,Height=HEIGHT,TopBarH=TOPBAR_H,
 		TabBarH=TABBAR_H,FooterH=FOOTER_H,MatrixEnabled=matrixEnabled,MatrixDensity=100,MatrixBorder=matrixBorder,BgImage=bgImage,BgBaseTransparency=bgTransparency,BgUserEdited=false,WindowIcon=windowIcon,NotifHost=notifHost,
-		Nameplates=nameplates,NameplatesEnabled=true,DeveloperMode=false,SoundsEnabled=true,OwnerInfiniteYield=false,OwnerUnnamedESP=false,_ownerToolLoaded={},CustomizationTab=nil,OwnerTab=nil,ThemeOverrides={},ThemedInstances={},SearchRegistry={},ControlRegistry={},ButtonKeybindsEnabled=false,
+		Nameplates=nameplates,NameplatesEnabled=true,DeveloperMode=false,SoundsEnabled=true,OwnerInfiniteYield=false,OwnerUnnamedESP=false,_ownerToolLoaded={},AntiAfk=false,SuperMaxZoom=false,PlacesAutoCleanup=false,NamehideUi=false,OwnerInfiniteYield=false,OwnerUnnamedESP=false,_ownerToolLoaded={},CustomizationTab=nil,OwnerTab=nil,ThemeOverrides={},ThemedInstances={},SearchRegistry={},ControlRegistry={},ButtonKeybindsEnabled=false,
 		Keybindables={},SearchTab=nil,ExcludedFromSearch={Settings=true,Owner=true,Customize=true,Search=true},_themeRefs={main=main,topBar=topBar,topBarMask=topBarMask,tabBar=tabBar,starredRail=starredRail,footer=footer,
 			footerMask=footerMask,accentBar=accentBar,accentGrad=accentGrad,titleLabel=titleLabel,subtitleLabel=subtitleLabel,closeBtn=closeBtn,minimizeBtn=minimizeBtn,profilePopup=profilePopup,nameLabel=nameLabel,idLabel=idLabel,
 			railHint=railHint,avatar=avatar,versionBtn=versionBtn,changelogPopup=changelogPopup,},},Window)
@@ -749,7 +836,7 @@ function UILibrary:CreateWindow(config)config=config or{}local name=config.name 
 			if input.KeyCode==self.HideKeybind then self:ToggleHide()return end
 			if input.KeyCode==self.MinimizeKeybind then if not self.Hidden then self:ToggleMinimize()end
 				return end
-			local fireFn=self._buttonKeybinds and self._buttonKeybinds[input.KeyCode]if fireFn and not self.Hidden then fireFn()end
+			local fireFn=self._buttonKeybinds and self._buttonKeybinds[input.KeyCode]if fireFn then fireFn()end
 		end)
 		table.insert(self._connections,conn)end
 	local function toggleProfile()if self.Destroyed then return end
@@ -1433,13 +1520,55 @@ function Tab:CreateKeybind(config)config=config or{}local theme=self.Window.Them
 	})
 	return api
 end
+
+local RainbowHue = 0
+local RainbowTargets = {}
+local RainbowConn = nil
+local function ensureRainbowLoop()
+	if RainbowConn then return end
+	RainbowConn = RunService.Heartbeat:Connect(function(dt)
+		if next(RainbowTargets)==nil then return end
+		RainbowHue = (RainbowHue + dt * 0.08) % 1
+		local col = Color3.fromHSV(RainbowHue, 1, 1)
+		for _, fn in pairs(RainbowTargets) do
+			pcall(fn, col)
+		end
+	end)
+end
+local function registerRainbow(id, fn)
+	RainbowTargets[id] = fn
+	ensureRainbowLoop()
+end
+local function unregisterRainbow(id)
+	RainbowTargets[id] = nil
+end
+
 function Tab:CreateColorPicker(config)config=config or{}local window=self.Window local theme=window.Theme local color=config.color or Color3.fromRGB(255,255,255)local alpha=config.alpha or 1 local callback=config.callback or function()end
 	local h,s,v=Color3.toHSV(color)local HEADER_H=44 local PANEL_H=168 local row=new("Frame",{Name="Row",BackgroundColor3=theme.Panel,Size=UDim2.new(1,0,0,HEADER_H),BorderSizePixel=0,ClipsDescendants=true,ZIndex=5,
 	},{corner(8),stroke(theme.Stroke,1)})row.LayoutOrder=nextOrder(self.Page)row.Parent=self.Page if window._trackTheme then window._trackTheme(row,"Panel")end
 	local title=new("TextLabel",{BackgroundTransparency=1,Position=UDim2.new(0,14,0,0),Size=UDim2.new(0.55,-14,0,HEADER_H),Font=Enum.Font.GothamMedium,TextSize=14,TextColor3=theme.Text,TextXAlignment=Enum.TextXAlignment.Left,
 		Text=config.name or "Color",ZIndex=6,},{})title.Parent=row if window._trackTheme then window._trackTheme(title,"Text")window._trackTheme(row,"Panel")end
 	local swatch=new("TextButton",{AnchorPoint=Vector2.new(1,0.5),Position=UDim2.new(1,-10,0,HEADER_H/2),Size=UDim2.new(0,36,0,24),BackgroundColor3=color,AutoButtonColor=false,Text="",ZIndex=6,},{corner(6),stroke(theme.Stroke,1)})
-	swatch.Parent=row local panel=new("Frame",{BackgroundColor3=theme.PanelLight,Position=UDim2.new(0,8,0,HEADER_H+4),Size=UDim2.new(1,-16,0,PANEL_H),Visible=false,ZIndex=8,BorderSizePixel=0,},{corner(8),stroke(theme.Stroke,1),pad(10,10,10,10)})
+	swatch.Parent=row
+	local rainbowOn=false
+	local rainbowId="cp_"..tostring(math.random(1,1e9))
+	local _cpPush=nil
+	local rainbowBtn=new("TextButton",{AnchorPoint=Vector2.new(1,0.5),Position=UDim2.new(1,-52,0,HEADER_H/2),Size=UDim2.new(0,40,0,22),BackgroundColor3=theme.PanelLight,Font=Enum.Font.GothamBold,TextSize=10,TextColor3=theme.Text,Text="RGB",AutoButtonColor=false,ZIndex=6,},{corner(6),stroke(theme.Stroke,1)})
+	rainbowBtn.Parent=row
+	local function setRainbow(on)
+		rainbowOn=on and true or false
+		rainbowBtn.Text=rainbowOn and "ON" or "RGB"
+		if rainbowOn then
+			registerRainbow(rainbowId,function(col)
+				if not row.Parent then unregisterRainbow(rainbowId) return end
+				if _cpPush then _cpPush(col) end
+			end)
+		else
+			unregisterRainbow(rainbowId)
+		end
+	end
+	rainbowBtn.MouseButton1Click:Connect(function() setRainbow(not rainbowOn) end)
+ local panel=new("Frame",{BackgroundColor3=theme.PanelLight,Position=UDim2.new(0,8,0,HEADER_H+4),Size=UDim2.new(1,-16,0,PANEL_H),Visible=false,ZIndex=8,BorderSizePixel=0,},{corner(8),stroke(theme.Stroke,1),pad(10,10,10,10)})
 	panel.Parent=row local svBox=new("ImageButton",{Size=UDim2.new(0,120,0,100),BackgroundColor3=Color3.fromHSV(h,1,1),AutoButtonColor=false,ZIndex=9,},{corner(6)})svBox.Parent=panel local whiteGrad=new("Frame",{Size=UDim2.new(1,0,1,0),
 		BackgroundColor3=Color3.new(1,1,1),BorderSizePixel=0,ZIndex=9,},{corner(6)})whiteGrad.Parent=svBox new("UIGradient",{Color=ColorSequence.new(Color3.new(1,1,1),Color3.new(1,1,1)),Transparency=NumberSequence.new({NumberSequenceKeypoint.new(0,0),
 		NumberSequenceKeypoint.new(1,1),}),}).Parent=whiteGrad local blackGrad=new("Frame",{Size=UDim2.new(1,0,1,0),BackgroundColor3=Color3.new(0,0,0),BorderSizePixel=0,ZIndex=10,},{corner(6)})blackGrad.Parent=svBox new("UIGradient",{
@@ -1495,7 +1624,9 @@ function Tab:CreateColorPicker(config)config=config or{}local window=self.Window
 		Set=function(_,c,a)if c then pushFromColor(c,false)end
 			if a then alpha=a end
 		end,
-	}end
+	}
+	_cpPush=function(c) pushFromColor(c,true) end
+	end
 function Tab:CreateStat(config)config=config or{}local theme=self.Window.Theme local value=config.value or 0 local prefix=config.prefix or "" local suffix=config.suffix or "" local row,title=baseRow(theme)row.LayoutOrder=nextOrder(self.Page)
 	title.Text=config.name or "Stat" title.Position=UDim2.new(0,14,0,0)title.Size=UDim2.new(0.5,0,1,0)row.Parent=self.Page local valueLabel=new("TextLabel",{BackgroundTransparency=1,AnchorPoint=Vector2.new(1,0.5),Position=UDim2.new(1,-14,0.5,0),
 		Size=UDim2.new(0.4,0,1,0),Font=Enum.Font.GothamBold,TextSize=15,TextColor3=theme.AccentBlue,TextXAlignment=Enum.TextXAlignment.Right,Text=prefix .. tostring(value).. suffix,},{})valueLabel.Parent=row if self.Window._trackTheme then
@@ -1562,8 +1693,8 @@ function Window:_BuildCustomizationTab()if self.CustomizationTab then self.Custo
 		end
 		if self.BgImage and self.BgImage.Visible and self.BgImage.Image~="" then snap.BackgroundImage=self.BgImage.Image snap.BackgroundTransparency=self.BgBaseTransparency or 0 end
 		if self.CustomWindowIcon or(self.WindowIcon and not self.UsingThemeIcon)then snap.WindowIcon=self.CustomWindowIcon or self.WindowIcon.Image end
-		snap.MatrixDensity=self.MatrixDensity or 100 snap.NoPulse=true Themes[key]=snap local ok=saveCustomThemes()
-		print("[R8//TW0] Saved theme",key,"fs=",tostring(ok))
+		snap.MatrixDensity=self.MatrixDensity or 100 snap.NoPulse=true Themes[key]=snap local ok=saveOneTheme(key,snap)
+		print("[R8//TW0] Saved theme",key,"fs=",tostring(ok),"path=",themeFilePath(key))
 		self:Notify({title=ok and "Theme saved" or "Theme save failed",text=ok and ("Added "..key.." — wrote themes.json") or "Could not write themes.json (check executor filesystem)",icon=DEFAULT_ICON,})
 		if self._refreshThemeDropdown then self._refreshThemeDropdown()end
 	end,
@@ -1751,6 +1882,59 @@ function Window:CreateOwnerTab(config)
 	return ownerTab
 end
 
+
+function Window:SetAntiAfk(on)
+	self.AntiAfk = on and true or false
+	local lp = Players.LocalPlayer
+	if self._antiAfkConn then pcall(function() self._antiAfkConn:Disconnect() end) self._antiAfkConn=nil end
+	if not on or not lp then return end
+	if getconnections then
+		pcall(function()
+			for _, c in ipairs(getconnections(lp.Idled)) do
+				pcall(function() c:Disable() end)
+				pcall(function() c:Disconnect() end)
+			end
+		end)
+	end
+	self._antiAfkConn = lp.Idled:Connect(function()
+		pcall(function()
+			local vim = Instance.new("VirtualInputManager")
+			vim:SendMouseButtonEvent(0, 0, 0, true, game, 1)
+			vim:SendMouseButtonEvent(0, 0, 0, false, game, 1)
+			vim:Destroy()
+		end)
+	end)
+end
+
+function Window:SetSuperMaxZoom(on)
+	self.SuperMaxZoom = on and true or false
+	local lp = Players.LocalPlayer
+	if not lp then return end
+	if on then
+		if self._savedMaxZoom == nil then self._savedMaxZoom = lp.CameraMaxZoomDistance end
+		lp.CameraMaxZoomDistance = 9999
+	else
+		lp.CameraMaxZoomDistance = self._savedMaxZoom or 128
+	end
+end
+
+function Window:ApplyNamehide()
+	if not self.ScreenGui then return end
+	local pg = Players.LocalPlayer and Players.LocalPlayer:FindFirstChild("PlayerGui")
+	if not pg then return end
+	local candidates = {}
+	for _, child in ipairs(pg:GetChildren()) do
+		if child:IsA("ScreenGui") and child ~= self.ScreenGui then
+			table.insert(candidates, child.Name)
+		end
+	end
+	local decoys = {"ScreenFadeUI","LoadingGui","CoreNotify","PlayerList","BubbleChat","TouchGui","Health","Chat","TopBar","MenuUI","HUD","MainGui"}
+	for _, d in ipairs(decoys) do table.insert(candidates, d) end
+	local pick = candidates[math.random(1, math.max(1,#candidates))]
+	pcall(function() self.ScreenGui.Name = pick end)
+	self._namehideName = pick
+end
+
 function Window:CreateSettingsTab(config)config=config or{}local settingsTab=self:CreateTab({name=config.name or "Settings",icon=config.icon or SETTINGS_ICON,})self.SettingsTab=settingsTab if self.Description~="" then settingsTab:CreateText({
 		name="About",text=self.Description,starrable=false,})settingsTab:CreateDivider({line=false,spacing=6})end
 	local function themeOptionList()local opts={"R8TW0","RateOne","Concrete","Midnight","BloodBath","Ocean"}for k in pairs(Themes)do if type(k)=="string" and k:sub(1,7)=="Custom " then table.insert(opts,k)end
@@ -1788,9 +1972,65 @@ function Window:CreateSettingsTab(config)config=config or{}local settingsTab=sel
 			self.CustomizationTab.Button.Visible=false self.CustomizationTab.Page.Visible=false if self.ActiveTab==self.CustomizationTab and self.Tabs[1]then self.Tabs[1].Select()end
 		end
 	end,
-	})settingsTab:CreateDivider({text="notify"})settingsTab:CreateButton({name="Test notification",buttonText="Send",starrable=false,callback=function()self:Notify({title="R8//TW0",text="Themed notification stack (bottom-right).",
-		icon=DEFAULT_ICON,duration=4,})end,
-	})settingsTab:CreateText({name="Note",text="d" .. ATTR_NAME .. "\" d ",starrable=false,})pcall(function()self:CreateSearchTab()end)
+	})settingsTab:CreateDivider({text="QOL"})
+	settingsTab:CreateToggle({name="Anti AFK",value=self.AntiAfk==true,starrable=false,callback=function(v)
+		self:SetAntiAfk(v) pcall(function()self:SaveSettings()end)
+	end})
+	settingsTab:CreateToggle({name="Super max zoom",value=self.SuperMaxZoom==true,starrable=false,callback=function(v)
+		self:SetSuperMaxZoom(v) pcall(function()self:SaveSettings()end)
+	end})
+	settingsTab:CreateToggle({name="Places auto clean up",value=self.PlacesAutoCleanup==true,starrable=false,callback=function(v)
+		self.PlacesAutoCleanup=v and true or false
+		pcall(function()self:SaveSettings()end)
+		if v then self:CleanupOldPlaces() end
+		self:Notify({title="Places",text=v and "Place saves unused for 30+ days will be removed." or "Auto clean up off.",icon=DEFAULT_ICON,duration=3})
+	end})
+	settingsTab:CreateToggle({name="Namehide UI",value=self.NamehideUi==true,starrable=false,callback=function(v)
+		self.NamehideUi=v and true or false
+		pcall(function()self:SaveSettings()end)
+		if v then self:ApplyNamehide()
+		elseif self.ScreenGui then
+			pcall(function() self.ScreenGui.Name = "UILibrary_" .. tostring(self.Name or "R8TW0") end)
+		end
+	end})
+	settingsTab:CreateDivider({text="custom themes"})
+	settingsTab:CreateText({name="Delete custom",text="Only Custom themes can be deleted. Built-ins stay.",starrable=false})
+	local function customThemeNames()
+		local t={}
+		for k in pairs(Themes) do
+			if type(k)=="string" and k:sub(1,7)=="Custom " then table.insert(t,k) end
+		end
+		table.sort(t)
+		return t
+	end
+	local delDrop = settingsTab:CreateDropdown({
+		name="Custom theme",
+		options=customThemeNames(),
+		value=customThemeNames()[1],
+		starrable=false,
+		callback=function() end,
+	})
+	settingsTab:CreateButton({
+		name="Delete selected custom theme",
+		buttonText="Delete",
+		starrable=false,
+		callback=function()
+			local name = nil
+			if delDrop then
+				if delDrop.Get then name=delDrop:Get() elseif delDrop.get then name=delDrop.get() end
+			end
+			if type(name)~="string" or name:sub(1,7)~="Custom " then
+				self:Notify({title="Delete",text="Pick a Custom theme first.",icon=DEFAULT_ICON,duration=3})
+				return
+			end
+			deleteCustomTheme(name)
+			if self.ThemeName==name then self:SetTheme("R8TW0") end
+			if self._refreshThemeDropdown then self._refreshThemeDropdown() end
+			if delDrop and delDrop.SetOptions then delDrop:SetOptions(customThemeNames()) end
+			self:Notify({title="Deleted",text=name.." removed.",icon=DEFAULT_ICON,duration=3})
+		end,
+	})
+	pcall(function()self:CreateSearchTab()end)
 	return settingsTab
 end
 
@@ -1813,6 +2053,10 @@ function Window:_CollectSettings()
 		skipFakeLoading=self.SkipFakeLoading==true,
 		ownerInfiniteYield=self.OwnerInfiniteYield==true,
 		ownerUnnamedESP=self.OwnerUnnamedESP==true,
+		antiAfk=self.AntiAfk==true,
+		superMaxZoom=self.SuperMaxZoom==true,
+		placesAutoCleanup=self.PlacesAutoCleanup==true,
+		namehideUi=self.NamehideUi==true,
 	}
 	return s
 end
@@ -1837,22 +2081,50 @@ function Window:_ApplySettings(s)
 	if s.skipFakeLoading~=nil then self.SkipFakeLoading=s.skipFakeLoading and true or false end
 	if s.ownerInfiniteYield~=nil then self.OwnerInfiniteYield=s.ownerInfiniteYield and true or false end
 	if s.ownerUnnamedESP~=nil then self.OwnerUnnamedESP=s.ownerUnnamedESP and true or false end
+	if s.antiAfk~=nil then self:SetAntiAfk(s.antiAfk and true or false) end
+	if s.superMaxZoom~=nil then self:SetSuperMaxZoom(s.superMaxZoom and true or false) end
+	if s.placesAutoCleanup~=nil then self.PlacesAutoCleanup=s.placesAutoCleanup and true or false end
+	if s.namehideUi~=nil then self.NamehideUi=s.namehideUi and true or false if self.NamehideUi then self:ApplyNamehide() end end
 end
 function Window:LoadSettings()
 	local s=readJson(SAVE_SETTINGS)if s then self:_ApplySettings(s)end
 end
+function Window:_PlaceName()
+	local n=nil
+	pcall(function()
+		local info=game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId)
+		if info and info.Name then n=info.Name end
+	end)
+	if not n or n=="" then n=tostring(game.PlaceId) end
+	return n
+end
 function Window:_PlacePath()
-	return SAVE_PLACES.."/"..tostring(game.PlaceId)..".json"
+	return SAVE_PLACES.."/"..safeFileName(self:_PlaceName())..".json"
 end
 function Window:_CollectPlace()
 	local stars={}for k,_ in pairs(self.Starred or{})do table.insert(stars,k)end
 	local binds={}for _,ctrl in ipairs(self.Keybindables or{})do if ctrl.getKey and ctrl.getKey()then local kn=keyName(ctrl.getKey())local label=ctrl._label or nil if kn and label then binds[label]=kn end end end
-	-- also from registry names
 	for name,meta in pairs(self.ControlRegistry or{})do if meta.getKey then local k=meta.getKey()if k then binds[meta.name or name]=keyName(k)end end end
-	return{placeId=game.PlaceId,stars=stars,keybinds=binds}
+	return{placeId=game.PlaceId,placeName=self:_PlaceName(),stars=stars,keybinds=binds,lastUsed=os.time()}
 end
 function Window:SavePlace()
 	writeJson(self:_PlacePath(),self:_CollectPlace())
+end
+function Window:CleanupOldPlaces()
+	if not self.PlacesAutoCleanup then return end
+	if not fsOk() or typeof(listfiles)~="function" then return end
+	local cutoff=os.time()-(30*24*60*60)
+	pcall(function()
+		for _,p in ipairs(listfiles(SAVE_PLACES) or {}) do
+			if tostring(p):match("%.json$") then
+				local data=readJson(p)
+				local last=type(data)=="table" and tonumber(data.lastUsed)
+				if last and last<cutoff then
+					pcall(function()if typeof(delfile)=="function" then delfile(p)end end)
+				end
+			end
+		end
+	end)
 end
 function Window:SaveAll()
 	self:SaveSettings()
@@ -1860,11 +2132,18 @@ function Window:SaveAll()
 	self:SavePlace()
 end
 function Window:LoadPlace()
-	local data=readJson(self:_PlacePath())if type(data)~="table" then self._pendingStars={}self._pendingKeybinds={}return end
+	local data=readJson(self:_PlacePath())
+	if type(data)~="table" then data=readJson(SAVE_PLACES.."/"..tostring(game.PlaceId)..".json") end
+	if type(data)~="table" then self._pendingStars={}self._pendingKeybinds={}return end
 	self._pendingStars={}
 	if type(data.stars)=="table" then for _,k in ipairs(data.stars)do self._pendingStars[k]=true end end
 	self._pendingKeybinds={}
 	if type(data.keybinds)=="table" then for n,kn in pairs(data.keybinds)do self._pendingKeybinds[n]=kn end end
+	data.lastUsed=os.time()
+	data.placeName=data.placeName or self:_PlaceName()
+	data.placeId=data.placeId or game.PlaceId
+	writeJson(self:_PlacePath(),data)
+	self:CleanupOldPlaces()
 end
 function Window:ApplyPendingKeybind(label,ctrl)
 	if not label or not ctrl then return end
